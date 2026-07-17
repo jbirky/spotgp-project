@@ -1,0 +1,72 @@
+star_name: TIC 441420236
+
+# Optional: seed for reproducible MAP restarts and dynesty sampling
+# seed: 42
+
+data:
+  # To download from MAST, specify sectors/quarters (omit for all available).
+  # The mission is inferred from the ID: TIC -> TESS, KIC -> Kepler, EPIC -> K2.
+  sectors: [1, 2]
+  normalize: true
+  zero_mean: false
+  # downsample: 5              # keep every 5th point
+  # To use a local file instead, set path (CSV or .npz):
+  # path: data/lightcurve.csv
+
+model:
+  envelope: TrapezoidSymmetricEnvelope
+  envelope_params:
+    lspot: 20.0
+    tau_spot: 5.0
+  visibility: VisibilityFunction
+  visibility_params:
+    peq: 5.0
+    kappa: 0.0
+    inc: 1.047  # pi/3
+  sigma_k: 0.01
+
+bounds:
+  peq: [0.1, 40.0]
+  kappa: [-1.0, 1.0]
+  log_sigma_k: [-4.0, -1.0]
+
+# Optional: Gaussian priors on top of the uniform-in-bounds prior.
+# Keys use sampling-space names (log_* when bounds put a parameter
+# in log space).
+# priors:
+#   peq:
+#     mu: 5.0
+#     sigma: 0.5
+
+solver:
+  kernel_type: analytic
+  matrix_solver: cholesky_banded
+  n_harmonics: 3
+  n_lat: 64
+
+fitting:
+  # Optional: cheap ACF-based fit to initialize the MAP optimization.
+  # With nopt > 1 the MAP restarts are jittered around the ACF solution.
+  # acf_init:
+  #   nopt: 5
+  map:
+    nopt: 10
+  sampling:
+    sampler: dynesty
+    nlive: 500
+
+output:
+  save_dir: results
+  # Each run writes to {save_dir}/{star}_{envelope}_{hash}/ containing
+  # result.h5, metrics.json, config.yaml, and plots/. Set run_dir to
+  # override the directory (the DVC pipeline does this via params.yaml).
+  # run_dir: results/my-run
+
+# Experiment tracking (enable one or both):
+
+# wandb:
+#   project: my-project
+
+# mlflow:
+#   experiment: my-experiment
+#   tracking_uri: http://lab-server:5000

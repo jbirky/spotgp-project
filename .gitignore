@@ -1,0 +1,25 @@
+# Run outputs
+results/*
+!results/.gitkeep
+logs/*.out
+logs/*.err
+metrics.json
+
+# Containers
+*.sif
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Experiment tracking
+wandb/
+mlruns/
+
+# DVC local storage
+.dvc-storage/
+
+# Local editor/agent settings
+.claude/settings.local.json
+.claude/settings.local.json.tmp.*

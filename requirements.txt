@@ -1,0 +1,25 @@
+# spotgp with JAX support. For local development use an editable install
+# instead: pip install -e /path/to/spotgp[jax]
+spotgp[jax] @ git+https://github.com/jbirky/spotgp.git
+
+# Fitting and I/O
+dynesty
+h5py
+lightkurve
+pandas
+pyyaml
+
+# Pipeline
+dvc
+
+# Interactive explorer app
+plotly
+streamlit
+sympy
+
+# Optional NUTS sampler
+# blackjax
+
+# Optional experiment tracking
+# wandb
+# mlflow

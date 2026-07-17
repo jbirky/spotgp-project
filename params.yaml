@@ -1,0 +1,2 @@
+config: configs/example.yaml
+run_dir: results/example

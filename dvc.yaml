@@ -1,0 +1,18 @@
+stages:
+  fit:
+    cmd: python scripts/run_fit.py ${config} --output-dir ${run_dir}
+    deps:
+      - scripts/run_fit.py
+      - scripts/data_utils.py
+      - ${config}
+      # If the config reads a local light curve, add it here so edits
+      # trigger a re-run, e.g.:
+      # - data/lightcurve.csv
+    outs:
+      - ${run_dir}/result.h5
+    plots:
+      - ${run_dir}/plots:
+          cache: false
+    metrics:
+      - ${run_dir}/metrics.json:
+          cache: false
