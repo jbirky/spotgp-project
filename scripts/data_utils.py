@@ -80,14 +80,20 @@ def load_local_file(path):
     return [(t, y, yerr)]
 
 
-def process_data(segments, downsample=1, normalize=True, zero_mean=False):
-    """Normalize per segment, optionally zero-mean and downsample, then stitch.
+def process_data(segments, dt=None, normalize=True, zero_mean=False):
+    """Normalize per segment, optionally zero-mean and bin, then stitch.
 
     Normalization divides each segment by its median flux, so multi-sector
     data with different instrumental offsets stitch cleanly.
 
+    When *dt* is given and larger than the native cadence, each segment is
+    binned into non-overlapping windows of width *dt* using spotgp's
+    inverse-variance weighted binning (``TimeSeriesData.downsample``).
+
     Returns concatenated (time, flux, flux_err) arrays.
     """
+    from spotgp import TimeSeriesData
+
     processed = []
     for t, y, yerr in segments:
         if normalize:
@@ -96,10 +102,12 @@ def process_data(segments, downsample=1, normalize=True, zero_mean=False):
             yerr = yerr / med
         if zero_mean:
             y = y - np.mean(y)
-        if downsample > 1:
-            t = t[::downsample]
-            y = y[::downsample]
-            yerr = yerr[::downsample]
+        if dt is not None and dt > 0 and len(t) > 1:
+            native_dt = np.median(np.diff(t))
+            if dt > native_dt * 1.5:
+                ts = TimeSeriesData(t, y, yerr, normalize=False)
+                ts.downsample(dt)
+                t, y, yerr = ts.x, ts.y, ts.yerr
         processed.append((t, y, yerr))
     t = np.concatenate([s[0] for s in processed])
     y = np.concatenate([s[1] for s in processed])
