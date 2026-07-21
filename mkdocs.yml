@@ -1,4 +1,5 @@
 site_name: spotgp-project
+site_url: https://jessicabirky.com/spotgp-project/
 site_description: Gaussian Process fits for stellar variability from starspot models
 
 theme:
