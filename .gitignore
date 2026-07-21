@@ -20,6 +20,9 @@ mlruns/
 # DVC local storage
 .dvc-storage/
 
+# MkDocs build output
+site/
+
 # Local editor/agent settings
 .claude/settings.local.json
 .claude/settings.local.json.tmp.*

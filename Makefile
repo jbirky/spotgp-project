@@ -2,7 +2,7 @@ SPOTGP_SIF ?= $(HOME)/containers/spotgp.sif
 CONFIG     ?= configs/example.yaml
 PORT       ?= 8501
 
-.PHONY: run run-container submit validate test shell app clean
+.PHONY: run run-container submit validate test shell app docs serve clean
 
 run:
 	python scripts/run_fit.py $(CONFIG)
@@ -25,6 +25,12 @@ app:
 
 shell:
 	apptainer shell --bind $(PWD):/work $(SPOTGP_SIF)
+
+docs:
+	mkdocs build
+
+serve:
+	mkdocs serve
 
 clean:
 	rm -rf logs/*.out logs/*.err results/*/ results/*.h5 metrics.json

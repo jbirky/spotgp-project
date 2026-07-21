@@ -17,6 +17,9 @@ plotly
 streamlit
 sympy
 
+# Documentation
+mkdocs-material
+
 # Optional NUTS sampler
 # blackjax
 
