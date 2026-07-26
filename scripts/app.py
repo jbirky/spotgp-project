@@ -98,7 +98,19 @@ def cached_kernel(spot_components_tuple, sho_components_tuple,
     if sho_terms and ak:
         harmonics[0] = harmonics.get(0, np.zeros_like(lag)) + K_sho
 
-    return lag, K, max_lag, harmonics
+    component_kernels = {}
+    if has_spot and len(spot_components_tuple) > 1:
+        for i, (label, env_name, env_params_t, sk) in enumerate(
+                spot_components_tuple):
+            ck = ak._component_kernels[i]
+            component_kernels[label] = np.asarray(ck.kernel(lag))
+    elif has_spot:
+        component_kernels[spot_components_tuple[0][0]] = K_spot
+    for i, (label, sho_params_t) in enumerate(sho_components_tuple):
+        component_kernels[label] = np.asarray(
+            sho_terms[i].get_value(np.abs(lag)))
+
+    return lag, K, max_lag, harmonics, component_kernels
 
 
 def _compute_harmonic_components(ak, lag):
@@ -541,7 +553,8 @@ _device_labels = [str(d) for d in _available_devices]
 _device_idx = st.sidebar.selectbox(
     "Device", range(len(_device_labels)),
     format_func=lambda i: _device_labels[i])
-jax.config.update("jax_default_device", _available_devices[_device_idx])
+if _device_idx is not None:
+    jax.config.update("jax_default_device", _available_devices[_device_idx])
 
 st.sidebar.markdown("---")
 st.sidebar.header("Data")
@@ -988,10 +1001,9 @@ else:
     _export_star = os.path.splitext(os.path.basename(file_path))[0]
     _export_stem = _export_star
 
-export_path = st.sidebar.text_input(
-    "Config path", value=f"configs/{_export_stem}.yaml")
 
-if st.sidebar.button("Export config", use_container_width=True):
+def _build_config_dict():
+    """Build the config dict from current sidebar state."""
     _data_cfg = {}
     if data_source == "Local file":
         _data_cfg["path"] = file_path
@@ -1052,7 +1064,7 @@ if st.sidebar.button("Export config", use_container_width=True):
         if k != "inc"
     }
 
-    _cfg = {
+    return {
         "star_name": _export_star,
         "data": _data_cfg,
         "model": _model_cfg,
@@ -1065,13 +1077,26 @@ if st.sidebar.button("Export config", use_container_width=True):
         "output": {"save_dir": "results"},
     }
 
-    os.makedirs(os.path.dirname(export_path) or ".", exist_ok=True)
-    with open(export_path, "w") as f:
-        yaml.safe_dump(_cfg, f, sort_keys=False)
-    st.sidebar.success(f"Wrote {export_path} — run with "
-                       f"`python scripts/run_fit.py {export_path}`")
-    with st.sidebar.expander("Config contents"):
-        st.code(yaml.safe_dump(_cfg, sort_keys=False), language="yaml")
+
+def _dump_config_yaml(cfg):
+    """Dump config dict to YAML with short lists rendered inline."""
+    class _FlowListDumper(yaml.SafeDumper):
+        pass
+
+    def _represent_list(dumper, data):
+        if all(isinstance(v, (int, float)) for v in data) and len(data) <= 4:
+            return dumper.represent_sequence(
+                "tag:yaml.org,2002:seq", data, flow_style=True)
+        return dumper.represent_sequence(
+            "tag:yaml.org,2002:seq", data, flow_style=False)
+
+    _FlowListDumper.add_representer(list, _represent_list)
+    return yaml.dump(cfg, Dumper=_FlowListDumper, sort_keys=False)
+
+
+if st.sidebar.button("Generate Config", use_container_width=True):
+    st.session_state["config_yaml"] = _dump_config_yaml(
+        _build_config_dict())
 
 
 # ── Kernel computation (cached) ─────────────────────────────────────
@@ -1079,7 +1104,7 @@ if st.sidebar.button("Export config", use_container_width=True):
 
 model_ready = "model_params" in st.session_state
 kernel_error = None
-lag = K = max_lag = harmonics = None
+lag = K = max_lag = harmonics = component_kernels = None
 
 if model_ready:
     mp = st.session_state["model_params"]
@@ -1096,7 +1121,7 @@ if model_ready:
     latitude_params_tuple = tuple(sorted(
         mp.get("latitude_params", {}).items()))
     try:
-        lag, K, max_lag, harmonics = cached_kernel(
+        lag, K, max_lag, harmonics, component_kernels = cached_kernel(
             _spot_tuple, _sho_tuple,
             mp["visibility_name"], visibility_params_tuple,
             mp.get("latitude_name", "LatitudeDistributionFunction"),
@@ -1168,7 +1193,16 @@ elif kernel_error is not None:
     st.error(f"Model error: {kernel_error}")
 else:
     _harmonic_colors = ["#aaa", "#e377c2", "#2ca02c", "#ff7f0e"]
-    _hcols = st.columns(len(harmonics))
+    _n_total_comps = len(mp.get("components", []))
+    _show_comp_curves = False
+    if _n_total_comps > 1:
+        _ctrl_cols = st.columns([1, len(harmonics)])
+        with _ctrl_cols[0]:
+            _show_comp_curves = st.checkbox("Show components", value=False,
+                                            key="show_comp_curves")
+        _hcols = _ctrl_cols[1].columns(len(harmonics))
+    else:
+        _hcols = st.columns(len(harmonics))
     _selected_harmonics = []
     for n in range(len(harmonics)):
         with _hcols[n]:
@@ -1206,6 +1240,19 @@ else:
         name="Model kernel",
         line=dict(width=2, color="#d62728"),
         hovertemplate="Lag: %{x:.2f}<br>K: %{y:.4f}<extra></extra>"))
+
+    if _show_comp_curves and component_kernels:
+        _comp_colors = ["#ff7f0e", "#2ca02c", "#9467bd", "#8c564b",
+                        "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+        for _ci, (_clabel, _cK) in enumerate(component_kernels.items()):
+            _cK_plot = _cK / _K0_manual if _normalize_kernel else _cK
+            fig_kernel.add_trace(go.Scatter(
+                x=lag, y=_cK_plot, mode="lines",
+                name=_clabel,
+                line=dict(width=1.5, dash="dash",
+                          color=_comp_colors[_ci % len(_comp_colors)]),
+                hovertemplate=("Lag: %{x:.2f}<br>K: %{y:.4f}"
+                               "<extra></extra>")))
 
     if "map_kernel_data" in st.session_state:
         map_lag, map_K, map_harmonics = st.session_state["map_kernel_data"]
@@ -1279,6 +1326,40 @@ if model_ready and kernel_error is None:
         line=dict(width=2, color="#d62728"),
         hovertemplate=("Freq: %{x:.4f} c/d<br>"
                        "Power: %{y:.4e}<extra></extra>")))
+
+    if _show_comp_curves and _n_total_comps > 1:
+        _comp_colors = ["#ff7f0e", "#2ca02c", "#9467bd", "#8c564b",
+                        "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+        _psd_spot_comps = _spot_components(mp)
+        _psd_sho_comps = _sho_components(mp)
+        _psd_ci = 0
+        if psd_model is not None and len(_psd_spot_comps) > 1:
+            for _sc, _ck in zip(_psd_spot_comps,
+                                psd_kernel._component_kernels):
+                _cf, _cp = _ck.compute_psd(omega)
+                fig_psd.add_trace(go.Scatter(
+                    x=np.asarray(_cf), y=np.asarray(_cp), mode="lines",
+                    name=_sc["label"],
+                    line=dict(width=1.5, dash="dash",
+                              color=_comp_colors[_psd_ci % len(
+                                  _comp_colors)]),
+                    hovertemplate=("Freq: %{x:.4f} c/d<br>"
+                                   "Power: %{y:.4e}<extra></extra>")))
+                _psd_ci += 1
+        elif psd_model is not None and _psd_sho_comps:
+            _psd_ci += 1
+        for _sc in _psd_sho_comps:
+            _sp = _sc["sho_params"]
+            _term = spotgp_mod.SHOTerm(**_sp)
+            _cp = np.asarray(_term.get_psd(omega))
+            fig_psd.add_trace(go.Scatter(
+                x=psd_freq, y=_cp, mode="lines",
+                name=_sc["label"],
+                line=dict(width=1.5, dash="dash",
+                          color=_comp_colors[_psd_ci % len(_comp_colors)]),
+                hovertemplate=("Freq: %{x:.4f} c/d<br>"
+                               "Power: %{y:.4e}<extra></extra>")))
+            _psd_ci += 1
 
     if "map_psd_data" in st.session_state:
         map_psd_freq, map_psd_power = st.session_state["map_psd_data"]
@@ -1536,6 +1617,41 @@ else:
         st.table({k: f"{v:.6f}" for k, v in _fit_theta.items()})
     else:
         st.write(_fit_theta)
+
+
+# ── Config editor (main panel) ─────────────────────────────────────
+
+
+st.markdown("---")
+st.subheader("Config")
+
+if "config_yaml" not in st.session_state:
+    st.info('Click **Generate Config** in the sidebar to build a '
+            'config file from the current settings.')
+else:
+    from streamlit_ace import st_ace
+    _edited_yaml = st_ace(
+        value=st.session_state["config_yaml"],
+        language="yaml", theme="tomorrow", height=400,
+        key="config_editor")
+
+    _cfg_c1, _cfg_c2 = st.columns([3, 1])
+    _default_export_path = f"configs/{_export_stem}.yaml"
+    _export_path = _cfg_c1.text_input(
+        "Config file path", value=_default_export_path)
+    if _cfg_c2.button("Export Config", type="primary",
+                      use_container_width=True):
+        try:
+            yaml.safe_load(_edited_yaml)
+        except yaml.YAMLError as exc:
+            st.error(f"Invalid YAML: {exc}")
+        else:
+            os.makedirs(os.path.dirname(_export_path) or ".", exist_ok=True)
+            with open(_export_path, "w") as f:
+                f.write(_edited_yaml)
+            st.success(
+                f"Wrote `{_export_path}` — run with "
+                f"`python scripts/run_fit.py {_export_path}`")
 
 
 # ── Plot export (main panel) ────────────────────────────────────────

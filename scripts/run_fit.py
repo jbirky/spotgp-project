@@ -162,6 +162,7 @@ def load_data(cfg):
     normalize = data_cfg.get("normalize", True)
     zero_mean = data_cfg.get("zero_mean", False)
     downsample = int(data_cfg.get("downsample", 1))
+    dt = data_cfg.get("dt")
 
     if "path" in data_cfg:
         segments = load_local_file(data_cfg["path"])
@@ -176,9 +177,7 @@ def load_data(cfg):
         logger.info("Downloaded %d data points (%d segments)",
                     sum(len(s[0]) for s in segments), len(segments))
 
-    # Normalization happens per segment in process_data, so pass
-    # normalize=False to TimeSeriesData.
-    t, y, yerr = process_data(segments, downsample=downsample,
+    t, y, yerr = process_data(segments, dt=dt, downsample=downsample,
                               normalize=normalize, zero_mean=zero_mean)
     return TimeSeriesData(t, y, yerr, normalize=False)
 
@@ -472,6 +471,17 @@ def run(cfg, output_dir=None):
     # Copy of the resolved config so every run directory is self-contained.
     with open(os.path.join(run_dir, "config.yaml"), "w") as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
+
+    device = cfg.get("device")
+    if device:
+        import jax
+        try:
+            devs = jax.devices(device)
+            jax.config.update("jax_default_device", devs[0])
+            logger.info("Device: %s", devs[0])
+        except RuntimeError:
+            logger.warning("Requested device '%s' not available, "
+                           "falling back to default", device)
 
     seed = cfg.get("seed")
     rng = np.random.default_rng(seed)
