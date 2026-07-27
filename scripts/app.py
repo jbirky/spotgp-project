@@ -38,7 +38,8 @@ def _build_latitude_dist(name, params):
 @st.cache_data(show_spinner="Computing kernel...", ttl=300)
 def cached_kernel(spot_components_tuple, sho_components_tuple,
                   visibility_name, visibility_params_tuple,
-                  latitude_name, latitude_params_tuple):
+                  latitude_name, latitude_params_tuple,
+                  max_lag_override=None, n_lag=500):
     """Compute kernel for spot models and optional SHO terms.
 
     spot_components_tuple: tuple of (label, envelope_name, env_params_tuple, sigma_k)
@@ -46,7 +47,7 @@ def cached_kernel(spot_components_tuple, sho_components_tuple,
     """
     spotgp = _import_spotgp()
 
-    max_lag = 0.0
+    auto_max_lag = 0.0
     has_spot = len(spot_components_tuple) > 0
     has_sho = len(sho_components_tuple) > 0
 
@@ -75,20 +76,21 @@ def cached_kernel(spot_components_tuple, sho_components_tuple,
         else:
             model = spotgp.CompositeSpotModel(spot_models, labels=labels)
             ak = spotgp.CompositeAnalyticKernel(model)
-        max_lag = max(sm.envelope.kernel_support()
-                      for sm in spot_models) * 1.5
+        auto_max_lag = max(sm.envelope.kernel_support()
+                          for sm in spot_models) * 1.5
 
     sho_terms = []
     if has_sho:
         for _label, sho_params_t in sho_components_tuple:
             sho_terms.append(spotgp.SHOTerm(**dict(sho_params_t)))
         sho_support = max(t.rho * 6 for t in sho_terms)
-        max_lag = max(max_lag, sho_support)
+        auto_max_lag = max(auto_max_lag, sho_support)
 
-    if max_lag == 0:
-        max_lag = 50.0
+    if auto_max_lag == 0:
+        auto_max_lag = 50.0
 
-    lag = np.linspace(0, max_lag, 500)
+    max_lag = max_lag_override if max_lag_override is not None else auto_max_lag
+    lag = np.linspace(0, max_lag, n_lag)
 
     K_spot = np.asarray(ak.kernel(lag)) if ak else np.zeros_like(lag)
     K_sho = _eval_sho_kernel(sho_terms, lag) if sho_terms else np.zeros_like(lag)
@@ -110,7 +112,7 @@ def cached_kernel(spot_components_tuple, sho_components_tuple,
         component_kernels[label] = np.asarray(
             sho_terms[i].get_value(np.abs(lag)))
 
-    return lag, K, max_lag, harmonics, component_kernels
+    return lag, K, max_lag, auto_max_lag, harmonics, component_kernels
 
 
 def _compute_harmonic_components(ak, lag):
@@ -180,13 +182,22 @@ def _compute_all_harmonics(kernel_obj, lag):
 
 
 @st.cache_data(show_spinner="Downloading light curve...")
-def download_lightcurve(star_name, sectors_tuple):
-    return data_utils.download_lightcurve(star_name, sectors_tuple)
+def download_lightcurve(star_name, sectors_tuple, pipeline=None):
+    segments, sector_numbers, err = data_utils.download_lightcurve(
+        star_name, sectors_tuple, pipeline)
+    return segments, sector_numbers, err
 
 
 @st.cache_data(show_spinner="Loading file...")
 def load_local_file(path):
     return data_utils.load_local_file(path)
+
+
+@st.cache_data(show_spinner="Computing ACF...")
+def cached_acf(t, y, yerr, max_lag, n_bins=200):
+    spotgp = _import_spotgp()
+    data_obj = spotgp.TimeSeriesData(t, y, yerr, normalize=False)
+    return data_obj.compute_acf(n_bins=n_bins, max_lag=max_lag)
 
 
 _LAT_PARAM_MAP = {
@@ -562,16 +573,19 @@ data_source = st.sidebar.radio("Source", ["TIC / KIC ID", "Local file"])
 
 if data_source == "TIC / KIC ID":
     star_name = st.sidebar.text_input("Star name", value="KIC 7286309")
+    pipeline = st.sidebar.selectbox("Pipeline", list(data_utils.PIPELINES))
     sectors_input = st.sidebar.text_input(
         "Sectors / Quarters (comma-separated, blank for all)", value="")
     sectors = tuple(int(s.strip()) for s in sectors_input.split(",")
                     if s.strip()) if sectors_input.strip() else None
     if st.sidebar.button("Download"):
-        segments, err = download_lightcurve(star_name, sectors)
+        segments, sector_numbers, err = download_lightcurve(
+            star_name, sectors, pipeline)
         if err:
             st.sidebar.error(err)
         else:
             st.session_state["raw_segments"] = segments
+            st.session_state["sector_numbers"] = sector_numbers
             st.session_state["star_name"] = star_name
 else:
     file_path = st.sidebar.text_input("File path", value="data/lightcurve.csv")
@@ -616,9 +630,9 @@ visibility_params["peq"] = _synced_slider(
     st.sidebar, "P_eq (days)", 0.01, 40.0, 10.0, 0.01, key="peq")
 if visibility_name != "EdgeOnVisibilityFunction":
     visibility_params["kappa"] = _synced_slider(
-        st.sidebar, "kappa", -1.0, 1.0, 0.3, 0.01, key="kappa")
+        st.sidebar, "kappa", -1.0, 1.0, 0.0, 0.01, key="kappa")
     visibility_params["inc"] = _synced_slider(
-        st.sidebar, "inc (deg)", 0.0, 90.0, 60.0, 1.0,
+        st.sidebar, "inc (deg)", 0.0, 90.0, 90.0, 1.0,
         key="inc") * np.pi / 180.0
 
 st.sidebar.markdown("---")
@@ -912,8 +926,13 @@ else:
             _map_omega = np.linspace(0.01, _map_omega_max, 1000)
 
             if _map_model is not None:
-                _map_psd_freq, _map_psd_power = _map_kernel_obj.compute_psd(
-                    _map_omega)
+                try:
+                    _map_psd_freq, _map_psd_power = \
+                        _map_kernel_obj.compute_psd(_map_omega)
+                except Exception:
+                    with jax.default_device(jax.devices("cpu")[0]):
+                        _map_psd_freq, _map_psd_power = \
+                            _map_kernel_obj.compute_psd(_map_omega)
                 _map_psd_freq = np.asarray(_map_psd_freq)
                 _map_psd_power = np.asarray(_map_psd_power)
             else:
@@ -1104,7 +1123,7 @@ if st.sidebar.button("Generate Config", use_container_width=True):
 
 model_ready = "model_params" in st.session_state
 kernel_error = None
-lag = K = max_lag = harmonics = component_kernels = None
+lag = K = max_lag = auto_max_lag = harmonics = component_kernels = None
 
 if model_ready:
     mp = st.session_state["model_params"]
@@ -1120,12 +1139,17 @@ if model_ready:
     visibility_params_tuple = tuple(sorted(mp["visibility_params"].items()))
     latitude_params_tuple = tuple(sorted(
         mp.get("latitude_params", {}).items()))
+    _user_max_lag = st.session_state.get("kernel_max_lag")
+    _user_n_lag = st.session_state.get("kernel_n_lag", 500)
     try:
-        lag, K, max_lag, harmonics, component_kernels = cached_kernel(
-            _spot_tuple, _sho_tuple,
-            mp["visibility_name"], visibility_params_tuple,
-            mp.get("latitude_name", "LatitudeDistributionFunction"),
-            latitude_params_tuple)
+        lag, K, max_lag, auto_max_lag, harmonics, component_kernels = \
+            cached_kernel(
+                _spot_tuple, _sho_tuple,
+                mp["visibility_name"], visibility_params_tuple,
+                mp.get("latitude_name", "LatitudeDistributionFunction"),
+                latitude_params_tuple,
+                max_lag_override=_user_max_lag,
+                n_lag=_user_n_lag)
     except Exception as e:
         kernel_error = str(e)
 
@@ -1178,6 +1202,25 @@ if has_data:
             hovertemplate="Time: %{x:.2f}<br>Mean: %{y:.6f}"
                           "<extra></extra>"))
 
+    _sector_nums = st.session_state.get("sector_numbers")
+    if _sector_nums and has_raw:
+        _raw_segs = st.session_state["raw_segments"]
+        _sector_info = sorted(
+            zip(_raw_segs, _sector_nums),
+            key=lambda pair: pair[0][0].min())
+        _shade_colors = ["rgba(200,200,200,0.15)", "rgba(160,160,160,0.15)"]
+        for _si, (_seg, _sn) in enumerate(_sector_info):
+            _t0, _t1 = float(_seg[0].min()), float(_seg[0].max())
+            fig_data.add_vrect(
+                x0=_t0, x1=_t1,
+                fillcolor=_shade_colors[_si % 2],
+                line_width=0, layer="below")
+            fig_data.add_annotation(
+                x=(_t0 + _t1) / 2, y=1.0, yref="paper",
+                text=f"S{_sn}", showarrow=False,
+                font=dict(size=10, color="gray"),
+                yanchor="bottom")
+
     fig_data.update_layout(
         title=f"{len(t)} data points",
         xaxis_title="Time (days)", yaxis_title="Flux",
@@ -1192,17 +1235,27 @@ if not model_ready:
 elif kernel_error is not None:
     st.error(f"Model error: {kernel_error}")
 else:
-    _harmonic_colors = ["#aaa", "#e377c2", "#2ca02c", "#ff7f0e"]
     _n_total_comps = len(mp.get("components", []))
-    _show_comp_curves = False
-    if _n_total_comps > 1:
-        _ctrl_cols = st.columns([1, len(harmonics)])
-        with _ctrl_cols[0]:
-            _show_comp_curves = st.checkbox("Show components", value=False,
-                                            key="show_comp_curves")
-        _hcols = _ctrl_cols[1].columns(len(harmonics))
-    else:
-        _hcols = st.columns(len(harmonics))
+
+    _lag_col1, _lag_col2, _lag_col3 = st.columns([2, 2, 1])
+    with _lag_col1:
+        _kernel_max_lag = st.number_input(
+            "Max lag (days)", min_value=1.0,
+            value=st.session_state.get("kernel_max_lag", auto_max_lag),
+            step=1.0, format="%.1f", key="kernel_max_lag")
+    with _lag_col2:
+        _kernel_n_lag = st.number_input(
+            "Number of lag points", min_value=50, max_value=5000,
+            value=st.session_state.get("kernel_n_lag", 500),
+            step=50, key="kernel_n_lag")
+    with _lag_col3:
+        _show_comp_curves = st.checkbox(
+            "Show components", value=False,
+            key="show_comp_curves",
+            disabled=_n_total_comps < 2)
+
+    _harmonic_colors = ["#aaa", "#e377c2", "#2ca02c", "#ff7f0e"]
+    _hcols = st.columns(len(harmonics))
     _selected_harmonics = []
     for n in range(len(harmonics)):
         with _hcols[n]:
@@ -1215,21 +1268,18 @@ else:
 
     if has_data:
         try:
-            spotgp_acf = _import_spotgp()
             t_acf, y_acf, yerr_acf = st.session_state["data_arrays"]
-            data_obj = spotgp_acf.TimeSeriesData(
-                t_acf, y_acf, yerr_acf, normalize=False)
-            lag_centers, acf_data = data_obj.compute_acf()
-            acf_mask = lag_centers <= lag[-1]
+            lag_centers, acf_data = cached_acf(
+                t_acf, y_acf, yerr_acf, max_lag=float(lag[-1]))
             _normalize_kernel = True
             fig_kernel.add_trace(go.Scatter(
-                x=lag_centers[acf_mask], y=acf_data[acf_mask],
+                x=lag_centers, y=acf_data,
                 mode="lines", name="Data ACF",
                 line=dict(width=1, color="black"), opacity=0.7,
                 hovertemplate="Lag: %{x:.2f}<br>ACF: %{y:.4f}"
                               "<extra></extra>"))
-        except Exception:
-            pass
+        except Exception as e:
+            st.warning(f"ACF computation failed: {e}")
 
     K_sum = (sum(harmonics[n] for n in _selected_harmonics)
              if _selected_harmonics else np.zeros_like(lag))
@@ -1289,7 +1339,11 @@ if model_ready and kernel_error is None:
 
     if psd_model is not None:
         psd_kernel = _build_kernel_object(psd_model)
-        psd_freq, psd_power = psd_kernel.compute_psd(omega)
+        try:
+            psd_freq, psd_power = psd_kernel.compute_psd(omega)
+        except Exception:
+            with jax.default_device(jax.devices("cpu")[0]):
+                psd_freq, psd_power = psd_kernel.compute_psd(omega)
         psd_freq = np.asarray(psd_freq)
         psd_power = np.asarray(psd_power)
     else:
@@ -1336,7 +1390,11 @@ if model_ready and kernel_error is None:
         if psd_model is not None and len(_psd_spot_comps) > 1:
             for _sc, _ck in zip(_psd_spot_comps,
                                 psd_kernel._component_kernels):
-                _cf, _cp = _ck.compute_psd(omega)
+                try:
+                    _cf, _cp = _ck.compute_psd(omega)
+                except Exception:
+                    with jax.default_device(jax.devices("cpu")[0]):
+                        _cf, _cp = _ck.compute_psd(omega)
                 fig_psd.add_trace(go.Scatter(
                     x=np.asarray(_cf), y=np.asarray(_cp), mode="lines",
                     name=_sc["label"],
@@ -1346,7 +1404,16 @@ if model_ready and kernel_error is None:
                     hovertemplate=("Freq: %{x:.4f} c/d<br>"
                                    "Power: %{y:.4e}<extra></extra>")))
                 _psd_ci += 1
-        elif psd_model is not None and _psd_sho_comps:
+        elif psd_model is not None:
+            fig_psd.add_trace(go.Scatter(
+                x=psd_freq, y=psd_power - _eval_sho_psd(
+                    _sho_terms, omega) if _sho_terms else psd_power,
+                mode="lines",
+                name=_psd_spot_comps[0]["label"] if _psd_spot_comps else "Spot",
+                line=dict(width=1.5, dash="dash",
+                          color=_comp_colors[0]),
+                hovertemplate=("Freq: %{x:.4f} c/d<br>"
+                               "Power: %{y:.4e}<extra></extra>")))
             _psd_ci += 1
         for _sc in _psd_sho_comps:
             _sp = _sc["sho_params"]

@@ -171,7 +171,7 @@ def load_data(cfg):
         sectors = data_cfg.get("sectors")
 
         logger.info("Downloading light curve for %s", star_name)
-        segments, err = download_lightcurve(star_name, sectors)
+        segments, _sector_nums, err = download_lightcurve(star_name, sectors)
         if err:
             raise ValueError(err)
         logger.info("Downloaded %d data points (%d segments)",
@@ -475,6 +475,11 @@ def run(cfg, output_dir=None):
     device = cfg.get("device")
     if device:
         import jax
+        if device == "gpu":
+            os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+            os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.95")
+            os.environ.setdefault("XLA_FLAGS", "--xla_gpu_autotune_level=0")
+            os.environ.setdefault("TF_GPU_ALLOCATOR", "cuda_malloc_async")
         try:
             devs = jax.devices(device)
             jax.config.update("jax_default_device", devs[0])

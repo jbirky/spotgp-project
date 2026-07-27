@@ -18,48 +18,95 @@ def detect_mission(star_name):
     return "TESS", "SPOC"
 
 
-def download_lightcurve(star_name, sectors=None):
+PIPELINES = {
+    "Auto-detect": None,
+    "TESS / SPOC": ("TESS", "SPOC"),
+    "TESS / QLP": ("TESS", "QLP"),
+    "TESS / TESS-SPOC": ("TESS", "TESS-SPOC"),
+    "Kepler": ("Kepler", "Kepler"),
+    "K2": ("K2", "K2"),
+}
+
+
+def _parse_sector(mission_str):
+    """Extract the integer sector/quarter/campaign number from a mission string."""
+    match = re.search(r"(\d+)", str(mission_str))
+    return int(match.group(1)) if match else -1
+
+
+def download_lightcurve(star_name, sectors=None, pipeline=None):
     """Download light curve segments from MAST via lightkurve.
+
+    At most one light curve is downloaded per sector.  The user's
+    preferred *pipeline* is used when available; otherwise the highest
+    cadence (shortest exposure time) result is chosen.
 
     Parameters
     ----------
     star_name : str
-        Star identifier (TIC, KIC, or EPIC ID). The mission and pipeline
-        author are inferred with :func:`detect_mission`.
+        Star identifier (TIC, KIC, or EPIC ID).
     sectors : sequence of int, optional
         TESS sectors / Kepler quarters / K2 campaigns to keep. None keeps
         all available.
+    pipeline : str, optional
+        Key from :data:`PIPELINES`.  The corresponding author is preferred
+        for every sector where it is available.  When ``None`` or
+        ``"Auto-detect"``, the highest-cadence result per sector is used.
 
     Returns
     -------
     segments : list of (time, flux, flux_err) arrays or None
-        One entry per downloaded light curve, non-finite points removed.
+        One entry per sector, non-finite points removed.
     error : str or None
         Error message when nothing was found, else None.
     """
     import lightkurve as lk
 
-    mission, author = detect_mission(star_name)
-    search = lk.search_lightcurve(star_name, mission=mission, author=author)
-    if sectors:
-        seq = []
-        for m in search.table["mission"]:
-            match = re.search(r"(\d+)", str(m))
-            seq.append(int(match.group(1)) if match else -1)
-        search = search[np.isin(seq, list(sectors))]
-    if len(search) == 0:
-        return None, f"No {mission}/{author} data found for {star_name}"
+    if pipeline and pipeline in PIPELINES and PIPELINES[pipeline] is not None:
+        mission, preferred_author = PIPELINES[pipeline]
+    else:
+        mission, _ = detect_mission(star_name)
+        preferred_author = None
 
+    search = lk.search_lightcurve(star_name, mission=mission)
+    if len(search) == 0:
+        return None, f"No {mission} data found for {star_name}"
+
+    seq = np.array([_parse_sector(m) for m in search.table["mission"]])
+    if sectors:
+        mask = np.isin(seq, list(sectors))
+        search = search[mask]
+        seq = seq[mask]
+    if len(search) == 0:
+        return None, f"No {mission} data found for {star_name}"
+
+    authors = np.array(search.table["author"])
+    exptimes = np.array(search.table["exptime"], dtype=float)
+
+    selected = []
+    for sector in sorted(np.unique(seq)):
+        idxs = np.where(seq == sector)[0]
+        if preferred_author is not None:
+            pref = idxs[authors[idxs] == preferred_author]
+            if len(pref):
+                idxs = pref
+        selected.append(idxs[np.argmin(exptimes[idxs])])
+
+    selected = sorted(selected)
+    sector_numbers = [int(seq[i]) for i in selected]
+    search = search[selected]
     lcc = search.download_all()
     segments = []
-    for lc in lcc:
+    kept_sectors = []
+    for lc, sn in zip(lcc, sector_numbers):
         t = np.asarray(lc.time.value, dtype=float)
         y = np.asarray(lc.flux.value, dtype=float)
         yerr = np.asarray(lc.flux_err.value, dtype=float)
         mask = np.isfinite(t) & np.isfinite(y) & np.isfinite(yerr)
         if mask.any():
             segments.append((t[mask], y[mask], yerr[mask]))
-    return segments, None
+            kept_sectors.append(sn)
+    return segments, kept_sectors, None
 
 
 def load_local_file(path):
