@@ -6,13 +6,13 @@ theme:
   name: material
   palette:
     - scheme: default
-      primary: deep purple
+      primary: custom
       accent: amber
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: deep purple
+      primary: custom
       accent: amber
       toggle:
         icon: material/brightness-4
@@ -31,6 +31,12 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.arithmatex:
       generic: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra_css:
+  - stylesheets/extra.css
 
 extra_javascript:
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
@@ -39,8 +45,26 @@ nav:
   - Home: index.md
   - Getting Started:
     - Installation: installation.md
+    - Project Setup: project-setup.md
     - Interactive Explorer: gui-guide.md
     - YAML Config Guide: yaml-guide.md
   - Projects:
     - Gallery: projects/index.md
-    - TIC 441420236: projects/example.md
+    - KIC-8507979: projects/KIC-8507979.md
+    - Benchmarks:
+      - The Sun as a Star: projects/sun-as-a-star.md
+      - butterpy Injection-Recovery: projects/butterpy-injection-recovery.md
+      - Kepler-411: projects/kepler-411.md
+      - Kepler-63: projects/kepler-63.md
+      - Kepler-17: projects/kepler-17.md
+      - HAT-P-11: projects/hat-p-11.md
+      - Kepler-71: projects/kepler-71.md
+      - 16 Cygni A & B: projects/16-cygni.md
+      - KIC 8006161: projects/kic-8006161.md
+      - Benomar Sample: projects/benomar-dr-sample.md
+      - Kamiaka Sample: projects/kamiaka-inclination-sample.md
+      - Notsu Superflare Stars: projects/notsu-superflare-stars.md
+      - Kepler Eclipsing Binaries: projects/kepler-eclipsing-binaries.md
+      - Theta Cygni: projects/theta-cygni.md
+      - Montet Cycle Sample: projects/montet-activity-cycles.md
+      - NGC 6811 & NGC 6819: projects/kepler-clusters.md

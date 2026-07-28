@@ -1,2 +1,3 @@
-config: configs/example.yaml
-run_dir: results/example
+configs:
+  example: configs/example.yaml
+  KIC_7286309: configs/KIC_7286309.yaml

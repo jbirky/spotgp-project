@@ -7,6 +7,9 @@ data:
   # To download from MAST, specify sectors/quarters (omit for all available).
   # The mission is inferred from the ID: TIC -> TESS, KIC -> Kepler, EPIC -> K2.
   sectors: [1, 2]
+  # Cache produced by the `download` stage / "Fetch light curves". A missing
+  # cache falls back to a star_name download (and populates it).
+  path: data/lightcurves/example.npz
   normalize: true
   zero_mean: false
   # downsample: 5              # keep every 5th point

@@ -1,6 +1,9 @@
 # Run outputs
 results/*
 !results/.gitkeep
+
+# DVC-managed light-curve cache
+data/lightcurves/
 logs/*.out
 logs/*.err
 metrics.json

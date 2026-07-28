@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
 import sys
 
 import numpy as np
@@ -67,7 +68,10 @@ def validate_config(cfg):
     if "path" not in data_cfg and "star_name" not in cfg:
         errors.append("set 'star_name' (MAST download) or 'data.path' "
                       "(local file)")
-    if "path" in data_cfg and not os.path.exists(data_cfg["path"]):
+    # A missing path is OK when star_name is set: it names a cache file the
+    # download stage (or a fallback download) will produce.
+    if ("path" in data_cfg and not os.path.exists(data_cfg["path"])
+            and "star_name" not in cfg):
         errors.append(f"data file not found: {data_cfg['path']}")
 
     for k, v in cfg.get("bounds", {}).items():
@@ -163,19 +167,27 @@ def load_data(cfg):
     zero_mean = data_cfg.get("zero_mean", False)
     downsample = int(data_cfg.get("downsample", 1))
     dt = data_cfg.get("dt")
+    path = data_cfg.get("path")
 
-    if "path" in data_cfg:
-        segments = load_local_file(data_cfg["path"])
-    else:
+    if path and os.path.exists(path):
+        logger.info("Loading cached light curve: %s", path)
+        segments = load_local_file(path)
+    elif "star_name" in cfg:
         star_name = cfg["star_name"]
         sectors = data_cfg.get("sectors")
 
         logger.info("Downloading light curve for %s", star_name)
-        segments, _sector_nums, err = download_lightcurve(star_name, sectors)
+        segments, sector_nums, err = download_lightcurve(star_name, sectors)
         if err:
             raise ValueError(err)
         logger.info("Downloaded %d data points (%d segments)",
                     sum(len(s[0]) for s in segments), len(segments))
+        if path:  # populate the cache so later runs skip MAST
+            from data_utils import save_segments
+            save_segments(path, segments, sector_nums)
+            logger.info("Cached light curve to %s", path)
+    else:
+        segments = load_local_file(path)
 
     t, y, yerr = process_data(segments, dt=dt, downsample=downsample,
                               normalize=normalize, zero_mean=zero_mean)
@@ -374,6 +386,22 @@ class Tracker:
         self._metrics = {}
         os.makedirs(plots_dir, exist_ok=True)
 
+        # Provenance written into metrics.json so downstream tools (e.g. the
+        # GUI results table) can link a result back to its exact code version
+        # and W&B run.
+        try:
+            self._metrics["git_rev"] = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            self._metrics["git_rev"] = "unknown"
+        if self.wandb is not None:
+            try:
+                self._metrics["wandb_url"] = self.wandb.run.url
+                self._metrics["wandb_id"] = self.wandb.run.id
+            except Exception:
+                pass
+
     def log_params(self, params):
         if self.wandb:
             self.wandb.config.update(params)
@@ -477,7 +505,7 @@ def run(cfg, output_dir=None):
         import jax
         if device == "gpu":
             os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-            os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.95")
+            os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9")
             os.environ.setdefault("XLA_FLAGS", "--xla_gpu_autotune_level=0")
             os.environ.setdefault("TF_GPU_ALLOCATOR", "cuda_malloc_async")
         try:
@@ -532,7 +560,9 @@ def run(cfg, output_dir=None):
 
         tracker.log_metrics({"neg_log_posterior": float(result.fun)})
         if isinstance(theta_map, dict):
-            tracker.log_params({f"map_{k}": v for k, v in theta_map.items()})
+            _map_vals = {f"map_{k}": float(v) for k, v in theta_map.items()}
+            tracker.log_metrics(_map_vals)   # -> metrics.json (+ wandb.log)
+            tracker.log_params(_map_vals)    # -> wandb.config for filtering
 
         logger.info("MAP complete: fun=%.4f", result.fun)
 
@@ -595,9 +625,15 @@ def main():
     parser.add_argument("--output-dir", default=None,
                         help="Override the run output directory "
                              "(default: results/{run_name})")
+    parser.add_argument("--project-dir", default=None,
+                        help="Project directory — relative paths in the "
+                             "config resolve against this (default: cwd)")
     parser.add_argument("--validate", action="store_true",
                         help="Check the config and exit without running")
     args = parser.parse_args()
+
+    if args.project_dir:
+        os.chdir(args.project_dir)
 
     cfg = load_config(args.config)
 

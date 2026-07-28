@@ -1,8 +1,14 @@
 """Shared light-curve loading helpers for run_fit.py and app.py."""
 
+import os
 import re
 
 import numpy as np
+
+
+def cache_stem(star_name):
+    """Filesystem-safe stem for a target's cached light curve."""
+    return re.sub(r"[^0-9A-Za-z._-]+", "_", str(star_name).strip())
 
 
 def detect_mission(star_name):
@@ -110,21 +116,52 @@ def download_lightcurve(star_name, sectors=None, pipeline=None):
 
 
 def load_local_file(path):
-    """Load a local light curve file as a single segment.
+    """Load a local light curve file into a list of segments.
 
-    CSV files are read positionally (columns: time, flux, flux_err);
-    ``.npz`` files must contain ``time``, ``flux``, ``flux_err`` keys.
+    CSV files are read positionally (columns: time, flux, flux_err) as a
+    single segment. ``.npz`` files must contain ``time``, ``flux``,
+    ``flux_err``; a ``seg_lengths`` array (written by :func:`save_segments`)
+    restores the original per-sector segment boundaries.
     """
     if path.endswith(".csv"):
         import pandas as pd
         df = pd.read_csv(path)
-        t = df.iloc[:, 0].values
-        y = df.iloc[:, 1].values
-        yerr = df.iloc[:, 2].values
-    else:
-        arr = np.load(path)
-        t, y, yerr = arr["time"], arr["flux"], arr["flux_err"]
+        return [(df.iloc[:, 0].values, df.iloc[:, 1].values,
+                 df.iloc[:, 2].values)]
+
+    arr = np.load(path)
+    t, y, yerr = arr["time"], arr["flux"], arr["flux_err"]
+    if "seg_lengths" in getattr(arr, "files", []):
+        segments = []
+        i = 0
+        for n in arr["seg_lengths"]:
+            n = int(n)
+            segments.append((t[i:i + n], y[i:i + n], yerr[i:i + n]))
+            i += n
+        return segments
     return [(t, y, yerr)]
+
+
+def save_segments(path, segments, sectors=None):
+    """Save light-curve segments to an ``.npz`` cache file.
+
+    Stores the raw (unprocessed) segments concatenated, plus a
+    ``seg_lengths`` array so :func:`load_local_file` can restore the
+    per-sector boundaries that :func:`process_data` normalizes over.
+    """
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    if segments:
+        t = np.concatenate([s[0] for s in segments])
+        y = np.concatenate([s[1] for s in segments])
+        yerr = np.concatenate([s[2] for s in segments])
+    else:
+        t = y = yerr = np.array([], dtype=float)
+    payload = dict(time=t, flux=y, flux_err=yerr,
+                   seg_lengths=np.array([len(s[0]) for s in segments],
+                                        dtype=int))
+    if sectors is not None:
+        payload["sectors"] = np.asarray(list(sectors), dtype=int)
+    np.savez(path, **payload)
 
 
 def process_data(segments, dt=None, downsample=1, normalize=True,
