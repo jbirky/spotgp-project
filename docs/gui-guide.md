@@ -32,7 +32,7 @@ controls and a live fit-results table.
 
 ### Data source
 
-Load a light curve from one of two sources:
+Load a light curve from one of three sources:
 
 - **TIC / KIC ID** — enter a target name (e.g. `TIC 441420236` or
   `KIC 7286309`) and optionally restrict to specific sectors or quarters.
@@ -41,6 +41,17 @@ Load a light curve from one of two sources:
   for the same sector.
   Click **Download** to fetch the light curve from MAST via lightkurve.
 - **Local file** — enter the path to a CSV or `.npz` file and click **Load**.
+- **Catalog** — load a batch queue of targets from a CSV or text file.
+  Enter the path to an **Object list** file:
+    - **Plain text** — one star name per line
+    - **CSV** — first column is the ID; additional columns can set slider
+      parameters (e.g. `peq`, `kappa`, `inc`, `lspot`, `tau_spot`,
+      `log_sigma_k`) that are applied automatically when stepping to each target
+
+  When a queue is loaded, **Prev** / **Next** buttons step through the list,
+  and the counter shows progress (e.g. `3/12 (2 done)`). Click **Download**
+  to fetch the current target's light curve. **Save & Next** exports the
+  current config to a directory and advances to the next target.
 
 After loading, data processing options appear:
 
@@ -103,23 +114,7 @@ Change it to switch between projects without restarting the app. See
 [Project Setup](project-setup.md) for details on creating project
 directories.
 
-### 1 - Data (source queue)
-
-The sidebar's data section provides a **batch queue** for stepping through
-multiple targets without restarting the app.
-
-Enter the path to an **Object list** file:
-
-- **Plain text** — one star name per line
-- **CSV** — first column is the ID; additional columns can set slider
-  parameters (e.g. `peq`, `kappa`, `inc`, `lspot`, `tau_spot`,
-  `log_sigma_k`) that are applied automatically when stepping to each target
-
-When a queue is loaded, **Prev** / **Next** buttons step through the list,
-and the counter shows progress (e.g. `3/12 (2 done)`). **Save & Next**
-exports the current config to a directory and advances to the next target.
-
-### 3 - Model
+### 1 - Model
 
 #### Visibility
 
@@ -184,7 +179,7 @@ computes the GP prediction on the loaded data using the manual parameters.
 When multiple components are present, the total kernel is the sum of all
 component kernels (composite kernel).
 
-### 4 - Fit (Optimize)
+### 2 - Fit (Optimize)
 
 Run a MAP (maximum a posteriori) optimization on the loaded data:
 
@@ -286,7 +281,7 @@ For fitting many targets in sequence:
 
 1. Prepare a CSV or text file listing your targets (optionally with initial
    parameter guesses as columns)
-2. Load the object list in the sidebar
+2. Select **Catalog** as the data source and load the object list
 3. For each target: download, adjust model, run MAP fit
 4. Click **Save & Next** to export the config and advance
 5. When finished, use `dvc repro` or `batch_fit.sh` to run full sampling

@@ -734,7 +734,6 @@ _device_idx = st.sidebar.selectbox(
 if _device_idx is not None:
     jax.config.update("jax_default_device", _available_devices[_device_idx])
 
-st.sidebar.markdown("---")
 _project_dir = st.sidebar.text_input(
     "Project directory",
     value=_app_args.project_dir or os.getcwd(),
@@ -750,13 +749,7 @@ def _ppath(*parts):
     return os.path.join(_project_dir, p)
 
 
-st.sidebar.markdown("---")
-st.sidebar.header("1 · Data")
-st.sidebar.caption(
-    "Upload / download & the results table are in the panel at the top "
-    "of the page ↑. Batch queue below.")
-
-# ── Source queue ──────────────────────────────────────────────────────
+# ── Source queue helpers ─────────────────────────────────────────────
 
 # Slider keys that map directly (no component suffix needed)
 _DIRECT_SLIDER_KEYS = {
@@ -842,92 +835,56 @@ def _clear_source_state():
         st.session_state.pop(k, None)
 
 
-_queue_file = st.sidebar.text_input(
-    "Object list (CSV or text)", value="",
-    help="Path to a CSV with an ID column and optional parameter columns "
-         "(e.g. peq, kappa, inc, lspot, tau_spot, log_sigma_k), "
-         "or a plain text file with one name per line.")
-
-if _queue_file and os.path.isfile(_queue_file):
-    if st.session_state.get("_queue_file_path") != _queue_file:
-        _q_names, _q_params = _load_queue_file(_queue_file)
-        if _q_names:
-            st.session_state["queue_sources"] = _q_names
-            st.session_state["queue_params"] = _q_params
-            st.session_state["queue_idx"] = 0
-            st.session_state["queue_done"] = set()
-            st.session_state["_queue_file_path"] = _queue_file
-            _clear_source_state()
-            _p = _q_params[0] if _q_params else None
-            _apply_queue_params(_p)
-
-    if "queue_sources" in st.session_state and \
-            st.session_state["queue_sources"]:
-        _qi = st.session_state["queue_idx"]
-        _qlen = len(st.session_state["queue_sources"])
-        _q_params = st.session_state.get("queue_params")
-        _n_done = len(st.session_state.get("queue_done", set()))
-
-        if _q_params:
-            _matched = sorted(set().union(*_q_params))
-            st.sidebar.caption(f"Parameters: {', '.join(_matched)}")
-
-        _qprev, _qinfo, _qnext = st.sidebar.columns([1, 2, 1])
-        if _qprev.button("Prev", disabled=_qi == 0, use_container_width=True):
-            st.session_state["queue_idx"] = _qi - 1
-            _clear_source_state()
-            _p = _q_params[_qi - 1] if _q_params else None
-            _apply_queue_params(_p)
-            st.rerun()
-        _qinfo.markdown(
-            f"<div style='text-align:center;line-height:2.4'>"
-            f"<b>{_qi + 1}</b>/{_qlen} "
-            f"({_n_done} done)</div>",
-            unsafe_allow_html=True)
-        if _qnext.button("Next", disabled=_qi >= _qlen - 1,
-                         use_container_width=True):
-            st.session_state["queue_idx"] = _qi + 1
-            _clear_source_state()
-            _p = _q_params[_qi + 1] if _q_params else None
-            _apply_queue_params(_p)
-            st.rerun()
-
-        _queue_active = True
-        _queue_star = st.session_state["queue_sources"][_qi]
-    else:
-        _queue_active = False
-else:
-    _queue_active = False
-
-# ── Save & Next (auto-export + advance) ──────────────────────────────
-if _queue_active:
-    _save_dir = st.sidebar.text_input(
-        "Config output dir", value=_ppath("configs"))
-    if st.sidebar.button("Save & Next", type="primary",
-                         use_container_width=True):
-        st.session_state["_queue_save_pending"] = True
-
 # ── Data source (top panel) ──────────────────────────────────────────
 # The data upload/download controls and the fit-results table live in a
 # single collapsible panel pinned to the top of the main area (above the
 # plots). The container is created here so it renders first; the results
 # table is appended into the same expander further down, after the model
 # and MAP-fit state for this run has been computed.
+_DOCS = "https://jessicabirky.com/spotgp-project"
 top_panel = st.container()
 with top_panel:
+    with st.expander("Quick Start Guide", expanded=False):
+        st.markdown(f"""\
+**1. Load data** — Select a source below: enter a star ID and click \
+**Download**, load a local CSV/NPZ file, or choose **Catalog** to step \
+through a batch list.
+
+**2. Build model** — In the sidebar under **Model**, pick a visibility \
+function, envelope type, and adjust parameters. Click **Build model** to \
+compute the kernel and compare it with the data ACF.
+
+**3. Optimize** — Under **Fit**, select parameters and bounds, then click \
+**Run MAP Fit** to find the best-fit solution.
+
+**4. Export** — In the **Export** tab, generate a YAML config for full \
+sampling runs, save fit results to HDF5, or download plots as a \
+standalone HTML file.
+
+For batch fitting, use the **Catalog** source with a CSV/text target list, \
+then **Save & Next** to export configs and advance through each target.
+
+Docs: \
+[GUI Guide]({_DOCS}/gui-guide/) · \
+[YAML Config]({_DOCS}/yaml-guide/) · \
+[Project Setup]({_DOCS}/project-setup/) · \
+[Installation]({_DOCS}/installation/)""")
     results_panel = st.expander("Data & Fit Results", expanded=True)
 
 with results_panel:
     st.markdown("##### Data")
     data_source = st.radio(
-        "Source", ["TIC / KIC ID", "Local file"],
+        "Source", ["TIC / KIC ID", "Local file", "Catalog"],
         horizontal=True, key="data_source_radio")
 
+    _queue_active = False
+    _queue_star = ""
+    _save_dir = _ppath("configs")
+
     if data_source == "TIC / KIC ID":
-        _default_star = _queue_star if _queue_active else "KIC 7286309"
         _ds1, _ds2, _ds3, _ds4 = st.columns([3, 1, 1, 1])
         star_name = _ds1.text_input(
-            "Star name", value=_default_star, key="dl_star_name")
+            "Star name", value="KIC 7286309", key="dl_star_name")
         pipeline = _ds2.selectbox(
             "Pipeline", list(data_utils.PIPELINES), key="dl_pipeline")
         sectors_input = _ds3.text_input(
@@ -948,7 +905,8 @@ with results_panel:
                 st.session_state["sector_numbers"] = sector_numbers
                 st.session_state["star_name"] = star_name
                 _record_object_row(star_name)
-    else:
+
+    elif data_source == "Local file":
         _ds1, _ds2 = st.columns([4, 1])
         file_path = _ds1.text_input(
             "File path", value="data/lightcurve.csv", key="dl_file_path")
@@ -962,6 +920,137 @@ with results_panel:
                 _record_object_row(file_path)
             except Exception as e:
                 st.error(str(e))
+
+    else:  # Catalog
+        _cat1, _cat2, _cat3 = st.columns([3, 1, 1])
+        _queue_file = _cat1.text_input(
+            "Object list (CSV or text)", value="",
+            key="catalog_queue_file",
+            help="Path to a CSV with an ID column and optional parameter "
+                 "columns (e.g. peq, kappa, inc, lspot, tau_spot, "
+                 "log_sigma_k), or a plain text file with one name per line.")
+        _fetch_workers = _cat2.number_input(
+            "Download workers", min_value=1, max_value=16, value=6,
+            key="fetch_workers", help="Parallel MAST downloads")
+        _cat3.markdown("<div style='height:1.75em'></div>",
+                       unsafe_allow_html=True)
+        if _cat3.button("Download all targets",
+                        use_container_width=True, key="fetch_all_button",
+                        help="Download every params.yaml target into "
+                             "data/lightcurves/ (parallel, resumable)"):
+            try:
+                import fetch_lightcurves as _flc
+                _targets = _flc.targets_from_params(
+                    _ppath("params.yaml"))
+                _dl = [t for t in _targets if t.get("star_name")]
+                if not _dl:
+                    st.warning(
+                        "No downloadable targets in params.yaml.")
+                else:
+                    _bar = st.progress(0.0, text="Downloading…")
+
+                    def _fetch_cb(done, total, row):
+                        _bar.progress(
+                            done / total,
+                            text=f"{done}/{total} — "
+                                 f"{row['key']}: {row['status']}")
+
+                    _rows = _flc.fetch_targets(
+                        _dl,
+                        out_dir=_ppath("data", "lightcurves"),
+                        workers=int(_fetch_workers),
+                        progress=_fetch_cb)
+                    _bar.empty()
+                    _ok = sum(1 for r in _rows
+                              if r["status"] in ("ok", "cached"))
+                    _bad = [r for r in _rows
+                            if r["status"] not in ("ok", "cached")]
+                    st.success(
+                        f"Fetched {_ok}/{len(_rows)} targets "
+                        "into data/lightcurves/ "
+                        "(manifest.csv written).")
+                    if _bad:
+                        st.warning(
+                            "Not fetched: " + ", ".join(
+                                f"{r['key']} ({r['status']})"
+                                for r in _bad))
+            except Exception as e:
+                st.error(f"Fetch failed: {e}")
+
+        if _queue_file and os.path.isfile(_ppath(_queue_file)):
+            _queue_file_abs = _ppath(_queue_file)
+            if st.session_state.get("_queue_file_path") != _queue_file_abs:
+                _q_names, _q_params = _load_queue_file(_queue_file_abs)
+                if _q_names:
+                    st.session_state["queue_sources"] = _q_names
+                    st.session_state["queue_params"] = _q_params
+                    st.session_state["queue_idx"] = 0
+                    st.session_state["queue_done"] = set()
+                    st.session_state["_queue_file_path"] = _queue_file_abs
+                    _clear_source_state()
+                    _p = _q_params[0] if _q_params else None
+                    _apply_queue_params(_p)
+
+            if "queue_sources" in st.session_state and \
+                    st.session_state["queue_sources"]:
+                _qi = st.session_state["queue_idx"]
+                _qlen = len(st.session_state["queue_sources"])
+                _q_params = st.session_state.get("queue_params")
+                _n_done = len(st.session_state.get("queue_done", set()))
+
+                if _q_params:
+                    _matched = sorted(set().union(*_q_params))
+                    st.caption(f"Parameters: {', '.join(_matched)}")
+
+                _qprev, _qinfo, _qnext = st.columns([1, 2, 1])
+                if _qprev.button("Prev", disabled=_qi == 0,
+                                 use_container_width=True):
+                    st.session_state["queue_idx"] = _qi - 1
+                    _clear_source_state()
+                    _p = _q_params[_qi - 1] if _q_params else None
+                    _apply_queue_params(_p)
+                    st.rerun()
+                _qinfo.markdown(
+                    f"<div style='text-align:center;line-height:2.4'>"
+                    f"<b>{_qi + 1}</b>/{_qlen} "
+                    f"({_n_done} done)</div>",
+                    unsafe_allow_html=True)
+                if _qnext.button("Next", disabled=_qi >= _qlen - 1,
+                                 use_container_width=True):
+                    st.session_state["queue_idx"] = _qi + 1
+                    _clear_source_state()
+                    _p = _q_params[_qi + 1] if _q_params else None
+                    _apply_queue_params(_p)
+                    st.rerun()
+
+                _queue_active = True
+                _queue_star = st.session_state["queue_sources"][_qi]
+                star_name = _queue_star
+
+                st.session_state["star_name"] = star_name
+                _record_object_row(star_name)
+
+                # Auto-download the current catalog target
+                _cat_dl1, _cat_dl2 = st.columns([3, 1])
+                _cat_dl1.caption(f"Current target: **{star_name}**")
+                if _cat_dl2.button("Download", key="cat_dl_button",
+                                   use_container_width=True):
+                    _cat_segs, _cat_sectors, _cat_err = download_lightcurve(
+                        star_name, None, None)
+                    if _cat_err:
+                        st.error(_cat_err)
+                    else:
+                        st.session_state["raw_segments"] = _cat_segs
+                        st.session_state["sector_numbers"] = _cat_sectors
+
+                # Save & Next
+                _sn1, _sn2 = st.columns([3, 1])
+                _save_dir = _sn1.text_input(
+                    "Config output dir", value=_ppath("configs"),
+                    key="cat_save_dir")
+                if _sn2.button("Save & Next", type="primary",
+                               use_container_width=True):
+                    st.session_state["_queue_save_pending"] = True
 
     has_raw = "raw_segments" in st.session_state
 
@@ -984,16 +1073,19 @@ with results_panel:
 has_data = "data_arrays" in st.session_state
 
 # Canonical object name / filename stem, derived from the data source.
-if data_source == "TIC / KIC ID":
-    _export_star = star_name.strip()
-    _export_stem = _export_star.replace(" ", "_")
-else:
+if data_source == "Local file":
+    file_path = st.session_state.get("dl_file_path", "data/lightcurve.csv")
     _export_star = os.path.splitext(os.path.basename(file_path))[0]
     _export_stem = _export_star
+else:
+    star_name = st.session_state.get(
+        "dl_star_name", _queue_star or "KIC 7286309")
+    _export_star = star_name.strip()
+    _export_stem = _export_star.replace(" ", "_")
 
 st.sidebar.markdown("---")
-st.sidebar.header("2 · Model")
-st.sidebar.markdown("**Visibility**")
+st.sidebar.header("1 · Initialize Model")
+st.sidebar.markdown("**Visibility Function**")
 
 visibility_options = [
     "VisibilityFunction",
@@ -1168,7 +1260,7 @@ if col_fit.button("Preview GP", use_container_width=True):
 
 
 st.sidebar.markdown("---")
-st.sidebar.header("3 · Fit")
+st.sidebar.header("2 · Fit")
 
 _opt_ready = "model_params" in st.session_state and has_data
 if not _opt_ready:
@@ -1474,45 +1566,6 @@ with results_panel:
         "W&B project", value="spotgp", key="wandb_project",
         help="Used when registering configs for tracking and when pushing "
              "the table to W&B.")
-
-    # Bulk light-curve download for every pipeline target in params.yaml.
-    _fc1, _fc2 = st.columns([2, 1])
-    _fetch_workers = _fc2.number_input(
-        "Download workers", min_value=1, max_value=16, value=6,
-        key="fetch_workers", help="Parallel MAST downloads")
-    if _fc1.button("⤓ Fetch light curves (pipeline targets)",
-                   use_container_width=True,
-                   help="Download every params.yaml target into "
-                        "data/lightcurves/ (parallel, resumable)"):
-        try:
-            import fetch_lightcurves as _flc
-            _targets = _flc.targets_from_params(_ppath("params.yaml"))
-            _dl = [t for t in _targets if t.get("star_name")]
-            if not _dl:
-                st.warning("No downloadable targets in params.yaml.")
-            else:
-                _bar = st.progress(0.0, text="Downloading…")
-
-                def _fetch_cb(done, total, row):
-                    _bar.progress(done / total,
-                                  text=f"{done}/{total} — {row['key']}: "
-                                       f"{row['status']}")
-
-                _rows = _flc.fetch_targets(
-                    _dl, out_dir=_ppath("data", "lightcurves"),
-                    workers=int(_fetch_workers), progress=_fetch_cb)
-                _bar.empty()
-                _ok = sum(1 for r in _rows
-                          if r["status"] in ("ok", "cached"))
-                _bad = [r for r in _rows
-                        if r["status"] not in ("ok", "cached")]
-                st.success(f"Fetched {_ok}/{len(_rows)} targets into "
-                           "data/lightcurves/ (manifest.csv written).")
-                if _bad:
-                    st.warning("Not fetched: " + ", ".join(
-                        f"{r['key']} ({r['status']})" for r in _bad))
-        except Exception as e:
-            st.error(f"Fetch failed: {e}")
 
     _trk1, _trk2, _trk3, _trk4 = st.columns(4)
     if _trk1.button("↻ Load from results/", use_container_width=True,
