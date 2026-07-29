@@ -9,14 +9,18 @@ spotgp models stellar variability caused by starspots using analytic GP kernels 
 **Key features:**
 
 - YAML-driven experiment configs
+- Composite kernels: combine multiple spot models and SHO terms
 - MAP optimization and MCMC sampling (NUTS / nested sampling)
-- Interactive Streamlit explorer for tuning model parameters
+- Interactive Streamlit explorer with batch queue, fit-results table, and pipeline integration
+- Bulk parallel light-curve download from MAST with retry and caching
+- SLURM job array submission for batch fitting on HPC clusters
 - Self-contained HDF5 result files with embedded configs
-- DVC pipelines for reproducibility and experiment comparison
+- DVC pipelines (download, fit, index) with experiment tracking (wandb / MLflow)
 
 ## Getting started
 
-- [**Installation**](installation.md) — setup, dependencies, HPC containers, project structure
+- [**Installation**](installation.md) — setup, dependencies, HPC containers
+- [**Project Setup**](project-setup.md) — create analysis projects with their own configs, data, and results
 - [**Interactive Explorer**](gui-guide.md) — using the Streamlit GUI to tune models and run fits
 - [**YAML Config Guide**](yaml-guide.md) — config reference for the command-line runner and DVC pipelines
 

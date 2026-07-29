@@ -18,6 +18,17 @@ Validate a config without running:
 python scripts/run_fit.py configs/my_star.yaml --validate
 ```
 
+All paths in the config (data files, output directories) are resolved
+relative to the current working directory. When running from a different
+location, use `--project-dir`:
+
+```bash
+python scripts/run_fit.py configs/my_star.yaml --project-dir ~/projects/kepler-411
+```
+
+See [Project Setup](project-setup.md) for the full project directory
+workflow.
+
 ## Config reference
 
 ### `star_name`
@@ -41,6 +52,18 @@ Optional integer for reproducible MAP restarts and sampling.
 
 ```yaml
 seed: 42
+```
+
+### `device`
+
+Optional compute device. Set to `gpu` or `tpu` to run JAX on accelerators.
+When set to `gpu`, environment variables for memory allocation are
+configured automatically (`XLA_PYTHON_CLIENT_PREALLOCATE=false`,
+`XLA_PYTHON_CLIENT_MEM_FRACTION=0.9`). Falls back to the default device
+if the requested one is unavailable.
+
+```yaml
+device: gpu
 ```
 
 ### `data`
@@ -67,10 +90,37 @@ data:
   zero_mean: false
 ```
 
+**Cached light curve** — when both `star_name` and `data.path` are set,
+the runner first checks for a cached `.npz` file at `path`. If missing, it
+downloads from MAST using `star_name` and saves the result to `path` for
+future runs. The DVC `download` stage and the GUI's "Fetch light curves"
+button both populate this cache.
+
+```yaml
+star_name: TIC 441420236
+data:
+  path: data/lightcurves/example.npz
+  sectors: [1, 2]
+  normalize: true
+```
+
+**Time binning** — set `dt` to bin the light curve into non-overlapping
+windows of the given width (in days) using inverse-variance weighted
+averaging. Only applies when `dt` exceeds the native cadence by at least
+1.5x.
+
+```yaml
+data:
+  dt: 0.02              # bin to ~30 min cadence
+  normalize: true
+```
+
 ### `model`
 
 Defines the spot evolution model: envelope, visibility, and optionally a
 latitude distribution.
+
+#### Single-component model
 
 ```yaml
 model:
@@ -85,6 +135,69 @@ model:
     inc: 1.047
   sigma_k: 0.01
 ```
+
+#### Composite model
+
+Use a `components` list to combine multiple spot kernels with different
+envelopes or amplitudes. The total kernel is the sum of all component
+kernels. Each component shares the same visibility and latitude distribution.
+
+```yaml
+model:
+  visibility: VisibilityFunction
+  visibility_params:
+    peq: 5.0
+    kappa: 0.0
+    inc: 1.047
+  components:
+    - label: active-regions
+      envelope: TrapezoidSymmetricEnvelope
+      envelope_params:
+        lspot: 20.0
+        tau_spot: 5.0
+      sigma_k: 0.01
+    - label: long-lived
+      envelope: ExponentialEnvelope
+      envelope_params:
+        tau_spot: 30.0
+      sigma_k: 0.005
+```
+
+#### SHO terms
+
+Add Simple Harmonic Oscillator terms to model quasi-periodic or stochastic
+variability not captured by the spot model (e.g. granulation, p-mode
+oscillations). SHO terms are additive — they are summed with the spot
+kernel(s).
+
+```yaml
+model:
+  envelope: TrapezoidSymmetricEnvelope
+  envelope_params:
+    lspot: 20.0
+    tau_spot: 5.0
+  visibility: VisibilityFunction
+  visibility_params:
+    peq: 5.0
+    kappa: 0.0
+    inc: 1.047
+  sigma_k: 0.01
+  sho_terms:
+    - label: granulation
+      sigma: 0.005
+      rho: 2.0
+      tau: 10.0
+```
+
+Each SHO term has:
+
+| Parameter | Description |
+|-----------|-------------|
+| `label` | Name for identification |
+| `sigma` | Amplitude |
+| `rho` | Undamped period (days) |
+| `tau` | Damping time (days) — use either `tau` or `Q` |
+| `Q` | Quality factor — use either `Q` or `tau` |
 
 #### Envelope types
 
@@ -142,6 +255,17 @@ bounds:
 Prefix a parameter name with `log_` to sample in log10 space. For example,
 `log_sigma_k: [-4.0, -1.0]` samples sigma_k between 10^-4 and 10^-1.
 
+For composite models, suffix envelope parameters and `log_sigma_k` with
+the component label to set per-component bounds:
+
+```yaml
+bounds:
+  peq: [0.1, 40.0]
+  log_sigma_k_active-regions: [-4.0, -1.0]
+  log_sigma_k_long-lived: [-5.0, -2.0]
+  tau_spot_active-regions: [1.0, 30.0]
+```
+
 Parameters without explicit bounds use built-in defaults.
 
 ### `priors`
@@ -193,6 +317,9 @@ fitting:
     nopt: 5
 ```
 
+When both `acf_init` and `map` are present with `nopt > 1`, the MAP
+multi-start trials are jittered around the ACF solution.
+
 #### MAP optimization
 
 ```yaml
@@ -225,12 +352,15 @@ output:
   # run_dir: results/my-run   # override auto-generated directory name
 ```
 
+Paths are relative to the project directory (see
+[Project Setup](project-setup.md)).
+
 Each run writes to `{save_dir}/{star}_{envelope}_{hash}/` containing:
 
 ```
 result.h5       # data, model, solver state, MAP result, samples
 config.yaml     # copy of the resolved config
-metrics.json    # scalar metrics
+metrics.json    # scalar metrics (+ git rev, wandb URL)
 plots/          # ACF comparison, GP prediction, corner plot
 ```
 
@@ -259,9 +389,11 @@ mlflow:
 ```yaml
 star_name: TIC 441420236
 seed: 42
+device: gpu
 
 data:
   sectors: [1, 2]
+  path: data/lightcurves/example.npz
   normalize: true
   zero_mean: false
 
@@ -317,16 +449,33 @@ wandb:
 
 ## DVC pipeline
 
-The project uses [DVC](https://dvc.org) for reproducible pipelines.
-`params.yaml` selects the active config:
+Each project directory (see [Project Setup](project-setup.md)) has its own
+`dvc.yaml` and `params.yaml`. The pipeline defines three stages that run
+for every config registered in `params.yaml`:
+
+| Stage | Description |
+|-------|-------------|
+| `download` | Fetch light curves into `data/lightcurves/<key>.npz` |
+| `fit` | Run `run_fit.py` and produce `result.h5`, `metrics.json`, and plots |
+| `index` | Aggregate all runs into `results/results_index.csv` |
+
+### Registering targets
+
+`params.yaml` maps short keys to config file paths:
 
 ```yaml
-config: configs/my_star.yaml
-run_dir: results/my_star
+configs:
+  example: configs/example.yaml
+  KIC_7286309: configs/KIC_7286309.yaml
 ```
 
+You can add entries manually, or use the GUI's **Add object to pipeline**
+button to register the current config automatically.
+
+### Running the pipeline
+
 ```bash
-dvc repro               # run the fit (skips if nothing changed)
+dvc repro               # run all stages (skips if nothing changed)
 dvc metrics show         # print metrics.json
 dvc plots show           # view diagnostic plots
 dvc push                 # push result.h5 to shared storage
@@ -342,3 +491,56 @@ git add -A && git commit -m "test exponential envelope"
 dvc metrics diff main    # compare metrics
 dvc plots diff main      # compare plots
 ```
+
+## Batch fitting on HPC
+
+For running many configs on a SLURM cluster, use the job array script:
+
+```bash
+bash scripts/batch_fit.sh configs/
+```
+
+This submits one SLURM array job with one task per YAML file in the
+directory. Extra SBATCH flags are forwarded:
+
+```bash
+bash scripts/batch_fit.sh configs/ --partition=gpu --gres=gpu:1 --time=02:00:00
+```
+
+GPU environment variables are configured automatically when GPU resources
+are requested.
+
+## Bulk light curve download
+
+Download all `params.yaml` targets in parallel before fitting:
+
+```bash
+python scripts/fetch_lightcurves.py --params params.yaml --workers 6
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--params` | Path to `params.yaml` with a `configs:` map (default) |
+| `--config` | Single config file (single-target mode) |
+| `--out` | Output directory (bulk) or `.npz` file path (single) |
+| `--only` | Comma-separated subset of config keys to fetch |
+| `--workers` | Number of parallel download threads (default: 6) |
+| `--retries` | Retry count with exponential backoff (default: 3) |
+| `--force` | Re-download even if the cache file exists |
+
+A manifest CSV (`data/lightcurves/manifest.csv`) records every target's
+status, point/sector counts, and any errors.
+
+## Results index
+
+Aggregate all pipeline runs into a single CSV:
+
+```bash
+python scripts/build_index.py results --out results/results_index.csv
+```
+
+This scans `results/*/config.yaml` and `results/*/metrics.json` pairs and
+builds one row per run. The DVC `index` stage runs this automatically after
+all fits complete.

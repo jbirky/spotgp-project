@@ -23,6 +23,8 @@ mkdocs-material
 # Optional NUTS sampler
 # blackjax
 
+# Experiment tracking (W&B used by run_fit.py + the GUI results table)
+wandb
+
 # Optional experiment tracking
-# wandb
 # mlflow

@@ -1,0 +1,34 @@
+/* Custom primary color (see `theme.palette.primary: custom` in mkdocs.yml). */
+
+:root {
+  --md-primary-fg-color:        #bf0726;
+  --md-primary-fg-color--light: #ec092f;
+  --md-primary-fg-color--dark:  #94051d;
+  --md-primary-bg-color:        #ffffff;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
+}
+
+/* Project gallery: one full-width card per row instead of Material's
+   default auto-fit columns (repeat(auto-fit, minmax(16rem, 1fr))). */
+
+.md-typeset .grid.cards {
+  grid-template-columns: 1fr;
+}
+
+/* Shade the card title into a header band. Negative margins cancel the
+   card's .8rem padding so the band reaches the card edges; the band's
+   bottom border replaces the `---` divider, which is hidden below. */
+
+.md-typeset .grid.cards > ol > li > :first-child,
+.md-typeset .grid.cards > ul > li > :first-child {
+  background-color: var(--md-default-fg-color--lightest);
+  border-bottom: 0.05rem solid var(--md-default-fg-color--lightest);
+  border-radius: 0.1rem 0.1rem 0 0;
+  margin: -0.8rem -0.8rem 0.8rem;
+  padding: 0.5rem 0.8rem;
+}
+
+.md-typeset .grid.cards > ol > li > :first-child + hr,
+.md-typeset .grid.cards > ul > li > :first-child + hr {
+  display: none;
+}

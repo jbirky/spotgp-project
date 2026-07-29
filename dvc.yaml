@@ -1,18 +1,46 @@
 stages:
+  # Download each target's light curve into the local cache. The GUI's
+  # "Fetch light curves" button (and scripts/fetch_lightcurves.py --params)
+  # do the same in parallel; running either first makes this a cache hit.
+  download:
+    foreach: ${configs}
+    do:
+      cmd: python scripts/fetch_lightcurves.py --config ${item} --out data/lightcurves/${key}.npz
+      deps:
+        - scripts/fetch_lightcurves.py
+        - scripts/data_utils.py
+        - ${item}
+      outs:
+        - data/lightcurves/${key}.npz
+
+  # Fit every config registered under `configs:` in params.yaml.
+  # The GUI's "Add object to pipeline" button appends entries here.
   fit:
-    cmd: python scripts/run_fit.py ${config} --output-dir ${run_dir}
+    foreach: ${configs}
+    do:
+      cmd: python scripts/run_fit.py ${item} --output-dir results/${key}
+      deps:
+        - scripts/run_fit.py
+        - scripts/data_utils.py
+        - ${item}
+        - data/lightcurves/${key}.npz
+      outs:
+        - results/${key}/result.h5
+      plots:
+        - results/${key}/plots:
+            cache: false
+      metrics:
+        - results/${key}/metrics.json:
+            cache: false
+
+  # Aggregate all runs into a single, version-controlled results index.
+  # always_changed so it rebuilds from whatever runs currently exist;
+  # `dvc repro` runs download -> fit -> index in order.
+  index:
+    cmd: python scripts/build_index.py results --out results/results_index.csv
     deps:
-      - scripts/run_fit.py
-      - scripts/data_utils.py
-      - ${config}
-      # If the config reads a local light curve, add it here so edits
-      # trigger a re-run, e.g.:
-      # - data/lightcurve.csv
+      - scripts/build_index.py
+    always_changed: true
     outs:
-      - ${run_dir}/result.h5
-    plots:
-      - ${run_dir}/plots:
-          cache: false
-    metrics:
-      - ${run_dir}/metrics.json:
+      - results/results_index.csv:
           cache: false

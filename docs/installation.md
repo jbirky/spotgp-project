@@ -17,7 +17,8 @@ pip install -r requirements.txt
 ```
 
 This installs spotgp (with JAX), the fitting backends (dynesty), the
-interactive explorer (Streamlit), and all I/O and pipeline dependencies.
+interactive explorer (Streamlit), experiment tracking (wandb), and all
+I/O and pipeline dependencies.
 
 ## HPC / container install
 
@@ -43,15 +44,15 @@ manually as needed:
 | Package | Purpose |
 |---------|---------|
 | `blackjax` | NUTS sampler (alternative to dynesty) |
-| `wandb` | Experiment tracking with Weights & Biases |
 | `mlflow` | Experiment tracking with MLflow |
 
 ### Setting up wandb
 
-1. Install: `pip install wandb`
-2. Create a free account at [wandb.ai](https://wandb.ai)
-3. Authenticate: `wandb login` (paste your API key from [wandb.ai/authorize](https://wandb.ai/authorize))
-4. Add a `wandb:` section to your config YAML (see [YAML config guide](yaml-guide.md#experiment-tracking))
+wandb is included in the default dependencies. To use it:
+
+1. Create a free account at [wandb.ai](https://wandb.ai)
+2. Authenticate: `wandb login` (paste your API key from [wandb.ai/authorize](https://wandb.ai/authorize))
+3. Add a `wandb:` section to your config YAML (see [YAML config guide](yaml-guide.md#experiment-tracking))
 
 ### Setting up MLflow
 
@@ -70,35 +71,75 @@ spotgp and jax are available and skips otherwise.
 
 ## Project structure
 
+The `spotgp-project` repository contains the scripts, tests, and docs.
+Analysis work happens in **separate project directories** that you create
+with `init_project.py` (see [Project Setup](project-setup.md)):
+
+```bash
+python scripts/init_project.py ~/projects/kepler-411
+cd ~/projects/kepler-411
+make app    # launch the GUI pointed at this project
+```
+
+Each project gets its own `configs/`, `data/`, `results/`, `params.yaml`,
+and `dvc.yaml`, while sharing the spotgp-project scripts.
+
+### Repository layout
+
 ```
 spotgp-project/
-├── configs/           YAML run configurations
-├── data/              input light curve files
-├── results/           one directory per run (tracked by DVC)
-├── logs/              SLURM job logs
 ├── scripts/
-│   ├── run_fit.py     config-driven fit runner
-│   ├── data_utils.py  shared light-curve loading helpers
-│   ├── app.py         interactive Streamlit explorer
-│   ├── run_fit.slurm  SLURM job script for HPC clusters
-│   └── run_app.slurm  SLURM job script for the explorer app
-├── tests/             config and end-to-end smoke tests
-├── docs/              project website (MkDocs)
-├── dvc.yaml           DVC pipeline definition
-├── params.yaml        active config + run directory for dvc repro
-├── requirements.txt   pinned dependency list
-└── Makefile           shortcuts for common commands
+│   ├── run_fit.py         config-driven fit runner
+│   ├── data_utils.py      shared light-curve loading helpers
+│   ├── app.py             interactive Streamlit explorer
+│   ├── fetch_lightcurves.py  bulk parallel light-curve downloader
+│   ├── build_index.py     aggregate pipeline runs into a CSV index
+│   ├── init_project.py    scaffold a new analysis project
+│   ├── batch_fit.sh       SLURM job array submission script
+│   ├── run_fit.slurm      SLURM job script for single fits
+│   └── run_app.slurm      SLURM job script for the explorer app
+├── tests/                 config and end-to-end smoke tests
+├── docs/                  project website (MkDocs)
+├── requirements.txt       dependency list
+└── Makefile               shortcuts for common commands
+```
+
+### Project directory layout
+
+Created by `init_project.py` (or by working directly in `spotgp-project`):
+
+```
+my-project/
+├── configs/               YAML run configurations
+├── data/
+│   └── lightcurves/       cached .npz files (DVC download stage)
+├── results/               one directory per run (tracked by DVC)
+│   └── results_index.csv  aggregated results (DVC index stage)
+├── logs/                  SLURM job logs
+├── params.yaml            registered configs for dvc repro
+├── dvc.yaml               DVC pipeline (download → fit → index)
+├── Makefile               shortcuts referencing spotgp-project scripts
+└── batch_fit.sh           SLURM job array submission
 ```
 
 ## Make shortcuts
 
+From the `spotgp-project` directory (or a project created with
+`init_project.py`):
+
 ```bash
 make run CONFIG=configs/example.yaml            # local python
-make run-container CONFIG=configs/example.yaml   # apptainer
-make submit CONFIG=configs/example.yaml          # sbatch
 make validate CONFIG=configs/example.yaml        # check config only
 make app                                         # streamlit explorer
-make test                                        # run the test suite
+make test                                        # run the test suite (spotgp-project only)
+make init PROJECT_DIR=~/projects/my-star         # create a new project
+```
+
+From the `spotgp-project` directory only:
+
+```bash
+make run-container CONFIG=configs/example.yaml   # apptainer
+make submit CONFIG=configs/example.yaml          # sbatch
 make docs                                        # build docs site
 make serve                                       # preview docs locally
 make shell                                       # shell in container
