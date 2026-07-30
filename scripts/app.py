@@ -2,9 +2,12 @@
 
 import argparse
 import html
+import logging
 import os
 import sys
 from datetime import datetime
+
+logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
 
 import numpy as np
 import yaml
@@ -236,38 +239,48 @@ def _render_envelope_params(container, envelope_name, key_suffix):
     if envelope_name == "TrapezoidSymmetricEnvelope":
         params["lspot"] = _synced_slider(
             container, "lspot (days)", 0.0, 100.0, 15.0, 0.5,
-            key=f"lspot_{key_suffix}")
+            key=f"lspot_{key_suffix}",
+            help="Spot lifetime — duration of the flat top of the trapezoid")
         params["tau_spot"] = _synced_slider(
             container, "tau_spot (days)", 0.1, 50.0, 5.0, 0.1,
-            key=f"tau_spot_{key_suffix}")
+            key=f"tau_spot_{key_suffix}",
+            help="Rise/decay timescale of the trapezoid ramps")
     elif envelope_name == "TrapezoidAsymmetricEnvelope":
         params["lspot"] = _synced_slider(
             container, "lspot (days)", 0.0, 100.0, 15.0, 0.5,
-            key=f"lspot_{key_suffix}")
+            key=f"lspot_{key_suffix}",
+            help="Spot lifetime — duration of the flat top of the trapezoid")
         params["tau_em"] = _synced_slider(
             container, "tau_em (days)", 0.1, 50.0, 5.0, 0.1,
-            key=f"tau_em_{key_suffix}")
+            key=f"tau_em_{key_suffix}",
+            help="Emergence (rise) timescale")
         params["tau_dec"] = _synced_slider(
             container, "tau_dec (days)", 0.1, 50.0, 5.0, 0.1,
-            key=f"tau_dec_{key_suffix}")
+            key=f"tau_dec_{key_suffix}",
+            help="Decay timescale")
     elif envelope_name == "ExponentialEnvelope":
         params["tau_spot"] = _synced_slider(
             container, "tau_spot (days)", 0.1, 50.0, 5.0, 0.1,
-            key=f"tau_spot_{key_suffix}")
+            key=f"tau_spot_{key_suffix}",
+            help="e-folding decay timescale of the spot")
     elif envelope_name == "ExponentialAsymmetricEnvelope":
         params["tau_em"] = _synced_slider(
             container, "tau_em (days)", 0.1, 50.0, 5.0, 0.1,
-            key=f"tau_em_{key_suffix}")
+            key=f"tau_em_{key_suffix}",
+            help="Emergence (rise) e-folding timescale")
         params["tau_dec"] = _synced_slider(
             container, "tau_dec (days)", 0.1, 50.0, 5.0, 0.1,
-            key=f"tau_dec_{key_suffix}")
+            key=f"tau_dec_{key_suffix}",
+            help="Decay e-folding timescale")
     elif envelope_name == "SkewedGaussianEnvelope":
         params["sigma_sn"] = _synced_slider(
             container, "sigma_sn (days)", 0.1, 50.0, 5.0, 0.1,
-            key=f"sigma_sn_{key_suffix}")
+            key=f"sigma_sn_{key_suffix}",
+            help="Width of the skewed Gaussian envelope")
         params["n_sn"] = _synced_slider(
             container, "n_sn", 0.0, 10.0, 2.0, 0.1,
-            key=f"n_sn_{key_suffix}")
+            key=f"n_sn_{key_suffix}",
+            help="Skewness exponent — higher values skew toward later decay")
     return params
 
 
@@ -280,22 +293,26 @@ def _render_sho_params(container, key_suffix):
     """Render SHOTerm parameter sliders and return the params dict."""
     sigma = _synced_slider(
         container, "sigma", 0.0001, 0.1, 0.005, 0.0001,
-        key=f"sho_sigma_{key_suffix}", fmt="%.4f")
+        key=f"sho_sigma_{key_suffix}", fmt="%.4f",
+        help="RMS amplitude of the SHO term")
     rho = _synced_slider(
         container, "rho (days)", 0.1, 50.0, 5.0, 0.1,
-        key=f"sho_rho_{key_suffix}")
+        key=f"sho_rho_{key_suffix}",
+        help="Undamped oscillation period")
     damping = container.radio(
         "Damping", SHO_DAMPING_OPTIONS, key=f"sho_damp_{key_suffix}",
         horizontal=True)
     if damping == SHO_DAMPING_OPTIONS[0]:
         tau = _synced_slider(
             container, "tau (days)", 0.1, 100.0, 10.0, 0.1,
-            key=f"sho_tau_{key_suffix}")
+            key=f"sho_tau_{key_suffix}",
+            help="Damping time — how quickly the oscillation decays")
         return {"sigma": sigma, "rho": rho, "tau": tau}
     else:
         Q = _synced_slider(
             container, "Q", 0.1, 20.0, 2.0, 0.1,
-            key=f"sho_Q_{key_suffix}")
+            key=f"sho_Q_{key_suffix}",
+            help="Quality factor — higher Q means a narrower, more resonant peak")
         return {"sigma": sigma, "rho": rho, "Q": Q}
 
 
@@ -466,7 +483,7 @@ def build_map_model_params(mp, theta_map):
 
 
 def _synced_slider(container, label, min_value, max_value, value, step,
-                   key, fmt=None):
+                   key, fmt=None, help=None):
     """Slider with a synced number input box."""
     skey = f"_sync_{key}"
     sk = f"{skey}_s"
@@ -493,6 +510,8 @@ def _synced_slider(container, label, min_value, max_value, value, step,
     if fmt:
         slider_kw["format"] = fmt
         number_kw["format"] = fmt
+    if help:
+        slider_kw["help"] = help
 
     c1, c2 = container.columns([3, 1])
     c1.slider(label, min_value=min_value, max_value=max_value, step=step,
@@ -615,6 +634,202 @@ def _load_results_into_table(root="results"):
     return len(scanned)
 
 
+def _load_run_into_view(run_dir):
+    """Load a pipeline run directory into the app view.
+
+    Reads config.yaml and result.h5 from run_dir, reconstructs the model,
+    computes the MAP kernel/PSD/GP prediction, and populates session state
+    so the existing plots render the MAP solution.
+    """
+    import h5py
+
+    cfg_path = os.path.join(run_dir, "config.yaml")
+    h5_path = os.path.join(run_dir, "result.h5")
+
+    if not os.path.isfile(cfg_path):
+        st.error(f"Config not found: {cfg_path}")
+        return
+
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f) or {}
+
+    model_cfg = cfg.get("model", {})
+    data_cfg = cfg.get("data", {})
+
+    # Load data from result.h5 (already processed) or fall back to config
+    t = y = yerr = None
+    if os.path.isfile(h5_path):
+        with h5py.File(h5_path, "r") as hf:
+            if "data" in hf:
+                t = np.asarray(hf["data"]["time"])
+                y = np.asarray(hf["data"]["flux"])
+                yerr = np.asarray(hf["data"]["flux_err"])
+
+            # Read MAP parameters
+            theta_map = {}
+            if "map" in hf:
+                for k, v in hf["map"].attrs.items():
+                    if k != "neg_log_posterior":
+                        theta_map[k] = float(v)
+                neg_log_post = hf["map"].attrs.get("neg_log_posterior")
+
+    if t is None:
+        st.warning("No data in result.h5 — loading from config.")
+        data_path = data_cfg.get("path")
+        if data_path and os.path.isfile(_ppath(data_path)):
+            segments = load_local_file(_ppath(data_path))
+            t, y, yerr = process_data(
+                segments,
+                normalize=data_cfg.get("normalize", True),
+                zero_mean=data_cfg.get("zero_mean", False))
+        else:
+            st.error("Cannot locate data for this run.")
+            return
+
+    _clear_source_state()
+
+    star_name = cfg.get("star_name", os.path.basename(run_dir))
+    st.session_state["star_name"] = star_name
+    st.session_state["data_arrays"] = (t, y, yerr)
+
+    # Build model_params from config
+    vis_name = model_cfg.get("visibility", "VisibilityFunction")
+    vis_params = dict(model_cfg.get("visibility_params", {}))
+    lat_name = model_cfg.get("latitude", "LatitudeDistributionFunction")
+    lat_params = dict(model_cfg.get("latitude_params", {}))
+
+    # Convert internal latitude params to app-facing degrees
+    lat_map = _LAT_PARAM_MAP.get(lat_name, {})
+    for app_key, (internal_key, _, to_app) in lat_map.items():
+        if internal_key in lat_params:
+            lat_params[app_key] = float(to_app(lat_params.pop(internal_key)))
+
+    components = []
+    if "components" in model_cfg:
+        for comp in model_cfg["components"]:
+            sigma_k = comp.get("sigma_k", 0.01)
+            components.append({
+                "type": "spot",
+                "label": comp.get("label", "default"),
+                "envelope_name": comp.get("envelope", "TrapezoidSymmetricEnvelope"),
+                "envelope_params": dict(comp.get("envelope_params", {})),
+                "sigma_k": sigma_k,
+                "log_sigma_k": np.log10(sigma_k),
+            })
+    elif model_cfg.get("envelope"):
+        sigma_k = model_cfg.get("sigma_k", 0.01)
+        components.append({
+            "type": "spot",
+            "label": "default",
+            "envelope_name": model_cfg["envelope"],
+            "envelope_params": dict(model_cfg.get("envelope_params", {})),
+            "sigma_k": sigma_k,
+            "log_sigma_k": np.log10(sigma_k),
+        })
+    for sho in model_cfg.get("sho_terms", []) or []:
+        sho_copy = dict(sho)
+        label = sho_copy.pop("label", "sho")
+        components.append({
+            "type": "sho",
+            "label": label,
+            "sho_params": sho_copy,
+        })
+
+    mp = dict(
+        visibility_name=vis_name,
+        visibility_params=vis_params,
+        latitude_name=lat_name,
+        latitude_params=lat_params,
+        components=components,
+    )
+    st.session_state["model_params"] = mp
+
+    # If MAP solution is available, compute derived views
+    if not theta_map:
+        return
+
+    st.session_state["theta_map"] = theta_map
+
+    map_mp = build_map_model_params(mp, theta_map)
+    st.session_state["map_model_params"] = map_mp
+
+    spotgp = _import_spotgp()
+    _map_model = _build_spotgp_model(map_mp)
+
+    if _map_model is not None:
+        _map_kernel_obj = _build_kernel_object(_map_model)
+        if isinstance(_map_model, spotgp.CompositeSpotModel):
+            _map_max_lag = max(
+                c.envelope.kernel_support()
+                for c in _map_model.components) * 1.5
+        else:
+            _map_max_lag = _map_model.envelope.kernel_support() * 1.5
+        _map_lag = np.linspace(0, _map_max_lag, 500)
+        _map_K = np.asarray(_map_kernel_obj.kernel(_map_lag))
+        _map_harmonics = _compute_all_harmonics(_map_kernel_obj, _map_lag)
+    else:
+        _map_max_lag = 50.0
+        _map_lag = np.linspace(0, _map_max_lag, 500)
+        _map_K = np.zeros_like(_map_lag)
+        _map_harmonics = {0: np.zeros_like(_map_lag)}
+
+    _map_sho_terms = _build_sho_terms(map_mp)
+    if _map_sho_terms:
+        _map_sho_K = _eval_sho_kernel(_map_sho_terms, _map_lag)
+        _map_K = _map_K + _map_sho_K
+        _map_harmonics[0] = _map_harmonics[0] + _map_sho_K
+
+    st.session_state["map_kernel_data"] = (_map_lag, _map_K, _map_harmonics)
+
+    _map_omega_max = 2 * np.pi / map_mp["visibility_params"]["peq"] * 5
+    _map_omega = np.linspace(0.01, _map_omega_max, 1000)
+
+    if _map_model is not None:
+        try:
+            _map_psd_freq, _map_psd_power = \
+                _map_kernel_obj.compute_psd(_map_omega)
+        except Exception:
+            import jax
+            with jax.default_device(jax.devices("cpu")[0]):
+                _map_psd_freq, _map_psd_power = \
+                    _map_kernel_obj.compute_psd(_map_omega)
+        _map_psd_freq = np.asarray(_map_psd_freq)
+        _map_psd_power = np.asarray(_map_psd_power)
+    else:
+        _map_psd_freq = _map_omega / (2 * np.pi)
+        _map_psd_power = np.zeros_like(_map_omega)
+
+    if _map_sho_terms:
+        _map_psd_power = _map_psd_power + _eval_sho_psd(
+            _map_sho_terms, _map_omega)
+
+    st.session_state["map_psd_data"] = (_map_psd_freq, _map_psd_power)
+
+    # GP prediction requires building the solver
+    bounds_cfg = cfg.get("bounds", {})
+    solver_cfg = cfg.get("solver", {})
+    data_obj = spotgp.TimeSeriesData(t, y, yerr, normalize=False)
+    model_obj = _build_spotgp_model(mp)
+    if model_obj is not None:
+        try:
+            gp = spotgp.GPSolver(
+                data_obj, model_obj,
+                bounds={k: tuple(v) for k, v in bounds_cfg.items()},
+                kernel_type=solver_cfg.get("kernel_type", "analytic"),
+                matrix_solver=solver_cfg.get("matrix_solver",
+                                             "cholesky_banded"),
+                n_harmonics=solver_cfg.get("n_harmonics", 3),
+                n_lat=solver_cfg.get("n_lat", 64),
+            ).build_jax()
+            gp.set_params(theta_map)
+            _map_mu, _map_var = gp.predict(t)
+            _map_std = np.sqrt(np.clip(_map_var, 0, None))
+            st.session_state["map_gp_prediction"] = (t, _map_mu, _map_std)
+            st.session_state["gp"] = gp
+        except Exception as e:
+            st.warning(f"Could not compute GP prediction: {e}")
+
+
 def _add_current_to_pipeline(track_wandb=True, wandb_project="spotgp",
                              configs_dir="configs", params_path="params.yaml"):
     """Write the current config and register it in params.yaml's `configs:`
@@ -669,7 +884,7 @@ EXPORT_FIGS = []
 def show_fig(fig, name):
     """Render a Plotly figure and register it for the HTML export."""
     EXPORT_FIGS.append((name, fig))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 _EXPORT_CSS = """
@@ -895,7 +1110,7 @@ with results_panel:
         _ds4.markdown("<div style='height:1.75em'></div>",
                       unsafe_allow_html=True)
         if _ds4.button("Download", key="dl_button",
-                       use_container_width=True):
+                       width="stretch"):
             segments, sector_numbers, err = download_lightcurve(
                 star_name, sectors, pipeline)
             if err:
@@ -909,15 +1124,39 @@ with results_panel:
     elif data_source == "Local file":
         _ds1, _ds2 = st.columns([4, 1])
         file_path = _ds1.text_input(
-            "File path", value="data/lightcurve.csv", key="dl_file_path")
+            "File path", value="data/lightcurve.csv", key="dl_file_path",
+            help="**CSV** — three columns: `time`, `flux`, `flux_err` "
+                 "(header optional; columns are read by position).\n\n"
+                 "**NPZ** — must contain arrays named `time`, `flux`, "
+                 "`flux_err`. An optional `seg_lengths` array splits the "
+                 "data into per-sector segments.")
         _ds2.markdown("<div style='height:1.75em'></div>",
                       unsafe_allow_html=True)
-        if _ds2.button("Load", key="load_button", use_container_width=True):
+        if _ds2.button("Load", key="load_button", width="stretch"):
             try:
                 segments = load_local_file(_ppath(file_path))
                 st.session_state["raw_segments"] = segments
                 st.session_state["star_name"] = file_path
                 _record_object_row(file_path)
+            except Exception as e:
+                st.error(str(e))
+        _uploaded_lc = st.file_uploader(
+            "Or upload from your computer", type=["csv", "npz"],
+            key="upload_lc_file")
+        if _uploaded_lc is not None:
+            _ul_dir = _ppath("data")
+            os.makedirs(_ul_dir, exist_ok=True)
+            _ul_path = os.path.join(_ul_dir, _uploaded_lc.name)
+            with open(_ul_path, "wb") as _uf:
+                _uf.write(_uploaded_lc.getbuffer())
+            try:
+                segments = load_local_file(_ul_path)
+                st.session_state["raw_segments"] = segments
+                st.session_state["star_name"] = _uploaded_lc.name
+                st.session_state["dl_file_path"] = os.path.relpath(
+                    _ul_path, _project_dir)
+                _record_object_row(_uploaded_lc.name)
+                st.success(f"Saved to {_ul_path}")
             except Exception as e:
                 st.error(str(e))
 
@@ -926,16 +1165,33 @@ with results_panel:
         _queue_file = _cat1.text_input(
             "Object list (CSV or text)", value="",
             key="catalog_queue_file",
-            help="Path to a CSV with an ID column and optional parameter "
-                 "columns (e.g. peq, kappa, inc, lspot, tau_spot, "
-                 "log_sigma_k), or a plain text file with one name per line.")
+            help="**Text file** — one star name per line "
+                 "(e.g. `KIC 7286309`). Lines starting with `#` are "
+                 "ignored.\n\n"
+                 "**CSV** — first column is the star ID. Additional columns "
+                 "can set initial slider values using parameter names as "
+                 "headers: `peq`, `kappa`, `inc`, `lspot`, `tau_spot`, "
+                 "`tau_em`, `tau_dec`, `sigma_sn`, `n_sn`, `log_sigma_k`, "
+                 "`min_lat_deg`, `max_lat_deg`, `phi0_deg`, `sigma_deg`.")
+        _uploaded_cat = st.file_uploader(
+            "Or upload from your computer", type=["csv", "txt"],
+            key="upload_cat_file")
+        if _uploaded_cat is not None:
+            _uc_dir = _ppath("data")
+            os.makedirs(_uc_dir, exist_ok=True)
+            _uc_path = os.path.join(_uc_dir, _uploaded_cat.name)
+            with open(_uc_path, "wb") as _uf:
+                _uf.write(_uploaded_cat.getbuffer())
+            _queue_file = os.path.relpath(_uc_path, _project_dir)
+            st.session_state["catalog_queue_file"] = _queue_file
+            st.success(f"Saved to {_uc_path}")
         _fetch_workers = _cat2.number_input(
             "Download workers", min_value=1, max_value=16, value=6,
             key="fetch_workers", help="Parallel MAST downloads")
         _cat3.markdown("<div style='height:1.75em'></div>",
                        unsafe_allow_html=True)
         if _cat3.button("Download all targets",
-                        use_container_width=True, key="fetch_all_button",
+                        width="stretch", key="fetch_all_button",
                         help="Download every params.yaml target into "
                              "data/lightcurves/ (parallel, resumable)"):
             try:
@@ -1004,7 +1260,7 @@ with results_panel:
 
                 _qprev, _qinfo, _qnext = st.columns([1, 2, 1])
                 if _qprev.button("Prev", disabled=_qi == 0,
-                                 use_container_width=True):
+                                 width="stretch"):
                     st.session_state["queue_idx"] = _qi - 1
                     _clear_source_state()
                     _p = _q_params[_qi - 1] if _q_params else None
@@ -1016,7 +1272,7 @@ with results_panel:
                     f"({_n_done} done)</div>",
                     unsafe_allow_html=True)
                 if _qnext.button("Next", disabled=_qi >= _qlen - 1,
-                                 use_container_width=True):
+                                 width="stretch"):
                     st.session_state["queue_idx"] = _qi + 1
                     _clear_source_state()
                     _p = _q_params[_qi + 1] if _q_params else None
@@ -1034,7 +1290,7 @@ with results_panel:
                 _cat_dl1, _cat_dl2 = st.columns([3, 1])
                 _cat_dl1.caption(f"Current target: **{star_name}**")
                 if _cat_dl2.button("Download", key="cat_dl_button",
-                                   use_container_width=True):
+                                   width="stretch"):
                     _cat_segs, _cat_sectors, _cat_err = download_lightcurve(
                         star_name, None, None)
                     if _cat_err:
@@ -1049,7 +1305,7 @@ with results_panel:
                     "Config output dir", value=_ppath("configs"),
                     key="cat_save_dir")
                 if _sn2.button("Save & Next", type="primary",
-                               use_container_width=True):
+                               width="stretch"):
                     st.session_state["_queue_save_pending"] = True
 
     has_raw = "raw_segments" in st.session_state
@@ -1096,13 +1352,18 @@ visibility_name = st.sidebar.selectbox("Visibility", visibility_options)
 
 visibility_params = {}
 visibility_params["peq"] = _synced_slider(
-    st.sidebar, "P_eq (days)", 0.01, 40.0, 10.0, 0.01, key="peq")
+    st.sidebar, "P_eq (days)", 0.01, 40.0, 10.0, 0.01, key="peq",
+    help="Equatorial rotation period of the star")
 if visibility_name != "EdgeOnVisibilityFunction":
     visibility_params["kappa"] = _synced_slider(
-        st.sidebar, "kappa", -1.0, 1.0, 0.0, 0.01, key="kappa")
+        st.sidebar, "kappa", -1.0, 1.0, 0.0, 0.01, key="kappa",
+        help="Differential rotation shear — 0 = solid body, "
+             "positive = equator rotates faster")
     visibility_params["inc"] = _synced_slider(
         st.sidebar, "inc (deg)", 0.0, 90.0, 90.0, 1.0,
-        key="inc") * np.pi / 180.0
+        key="inc",
+        help="Stellar inclination — 90° is edge-on, 0° is pole-on") \
+        * np.pi / 180.0
 
 st.sidebar.markdown("**Latitude distribution**")
 
@@ -1119,16 +1380,20 @@ latitude_params = {}
 if latitude_name == "UniformDoubleHemisphereBand":
     latitude_params["min_lat_deg"] = _synced_slider(
         st.sidebar, "Min latitude (deg)", 0.0, 89.0, 0.0, 1.0,
-        key="min_lat_deg")
+        key="min_lat_deg",
+        help="Lower boundary of the active latitude band")
     latitude_params["max_lat_deg"] = _synced_slider(
         st.sidebar, "Max latitude (deg)", 1.0, 90.0, 40.0, 1.0,
-        key="max_lat_deg")
+        key="max_lat_deg",
+        help="Upper boundary of the active latitude band")
 elif latitude_name == "ButterflyLatitude":
     latitude_params["phi0_deg"] = _synced_slider(
-        st.sidebar, "phi0 (deg)", 0.0, 60.0, 15.0, 1.0, key="phi0_deg")
+        st.sidebar, "phi0 (deg)", 0.0, 60.0, 15.0, 1.0, key="phi0_deg",
+        help="Central latitude of the butterfly distribution")
     latitude_params["sigma_deg"] = _synced_slider(
         st.sidebar, "sigma_phi (deg)", 1.0, 30.0, 7.0, 0.5,
-        key="sigma_deg")
+        key="sigma_deg",
+        help="Width (standard deviation) of the latitude distribution")
 
 st.sidebar.markdown("**Kernel components**")
 
@@ -1164,7 +1429,8 @@ for _ci, _comp in enumerate(st.session_state["components"]):
             _env_params = _render_envelope_params(_exp, _env_name, _ksuf)
             _log_sk = _synced_slider(
                 _exp, "log sigma_k", -6.0, 0.0, -2.0, 0.1,
-                key=f"log_sigma_k_{_ksuf}")
+                key=f"log_sigma_k_{_ksuf}",
+                help="Log₁₀ of the spot contrast amplitude")
             _comp_configs.append({
                 "type": "spot",
                 "label": _new_label,
@@ -1188,7 +1454,7 @@ for _ci, _comp in enumerate(st.session_state["components"]):
                     if c["id"] != _cid]
                 st.rerun()
 
-if st.sidebar.button("+ Add Component", use_container_width=True):
+if st.sidebar.button("+ Add Component", width="stretch"):
     _next_id = st.session_state["next_comp_id"]
     st.session_state["components"].append(
         {"id": _next_id, "label": f"comp{_next_id}", "type": "spot"})
@@ -1198,7 +1464,7 @@ if st.sidebar.button("+ Add Component", use_container_width=True):
 st.sidebar.markdown("---")
 
 col_gen, col_fit = st.sidebar.columns(2)
-if col_gen.button("Build model", type="primary", use_container_width=True):
+if col_gen.button("Build model", type="primary", width="stretch"):
     st.session_state["model_params"] = dict(
         visibility_name=visibility_name,
         visibility_params=visibility_params,
@@ -1221,7 +1487,7 @@ if col_gen.button("Build model", type="primary", use_container_width=True):
                  "map_psd_data", "map_gp_prediction"):
         st.session_state.pop(_key, None)
 
-if col_fit.button("Preview GP", use_container_width=True):
+if col_fit.button("Preview GP", width="stretch"):
     if "model_params" not in st.session_state:
         st.sidebar.error("Build a model first.")
     elif "data_arrays" not in st.session_state:
@@ -1311,7 +1577,7 @@ else:
     st.session_state["fit_bounds"] = fit_bounds
 
     if st.sidebar.button("Run MAP Fit", type="primary",
-                         use_container_width=True):
+                         width="stretch"):
         spotgp = _import_spotgp()
         t, y, yerr = st.session_state["data_arrays"]
         data_obj = spotgp.TimeSeriesData(t, y, yerr, normalize=False)
@@ -1568,7 +1834,7 @@ with results_panel:
              "the table to W&B.")
 
     _trk1, _trk2, _trk3, _trk4 = st.columns(4)
-    if _trk1.button("↻ Load from results/", use_container_width=True,
+    if _trk1.button("↻ Load from results/", width="stretch",
                     help="Merge tracked pipeline runs (results/*/metrics.json)"):
         if scan_results is None:
             st.warning("build_index.scan_results is unavailable.")
@@ -1576,7 +1842,7 @@ with results_panel:
             _n = _load_results_into_table(root=_ppath("results"))
             st.toast(f"Loaded {_n} pipeline run(s) from results/")
             st.rerun()
-    if _trk2.button("＋ Add object to pipeline", use_container_width=True,
+    if _trk2.button("＋ Add object to pipeline", width="stretch",
                     help="Write config + register it in params.yaml for "
                          "`dvc exp run`"):
         if "model_params" not in st.session_state:
@@ -1590,7 +1856,7 @@ with results_panel:
                 st.toast(f"Registered `{_key}` → {_cfgp}. Run: dvc exp run")
             except Exception as e:
                 st.error(f"Could not add to pipeline: {e}")
-    if _trk3.button("⤓ Write index CSV", use_container_width=True,
+    if _trk3.button("⤓ Write index CSV", width="stretch",
                     help="Write results/results_index.csv (DVC `index` stage)"):
         if write_index is None:
             st.warning("build_index.write_index is unavailable.")
@@ -1603,7 +1869,7 @@ with results_panel:
                          "index`.")
             except Exception as e:
                 st.error(f"Could not write index: {e}")
-    if _trk4.button("☁ Push table to W&B", use_container_width=True,
+    if _trk4.button("☁ Push table to W&B", width="stretch",
                     help="Log the current table as a wandb.Table dashboard"):
         if not _results_rows:
             st.warning("Table is empty.")
@@ -1626,17 +1892,39 @@ with results_panel:
             "Object ID", "Visibility function", "Latitude function",
             "Kernel components", "MAP parameter values", "Neg. log posterior",
             "Run dir", "Git rev", "W&B"]
-        st.dataframe(
-            _results_df, use_container_width=True, hide_index=True,
+        _selection = st.dataframe(
+            _results_df, width="stretch", hide_index=True,
+            on_select="rerun", selection_mode="single-row",
+            key="results_selection",
             column_config={
                 "W&B": st.column_config.LinkColumn("W&B", display_text="open")})
+
+        _sel_rows = _selection.selection.rows if _selection else []
+        if _sel_rows:
+            _sel_idx = _sel_rows[0]
+            _sel_row = _results_rows[_sel_idx]
+            _sel_run_dir = _sel_row.get("run_dir", "")
+            if _sel_run_dir:
+                _resolved = _ppath(_sel_run_dir)
+                if (_resolved
+                        != st.session_state.get("_loaded_run_dir")):
+                    st.session_state["_loaded_run_dir"] = _resolved
+                    with st.spinner(
+                            f"Loading {_sel_row.get('object_id', '')}..."):
+                        _load_run_into_view(_resolved)
+                    st.rerun()
+            else:
+                st.caption("No run directory for this row — "
+                           "interactive rows cannot be reloaded.")
+
         _rt1, _rt2 = st.columns([1, 5])
         _rt1.download_button(
             "Download CSV", _results_df.to_csv(index=False),
             file_name="fit_results.csv", mime="text/csv",
-            key="results_csv", use_container_width=True)
+            key="results_csv", width="stretch")
         if _rt2.button("Clear table", key="clear_results"):
             st.session_state["results_table"] = []
+            st.session_state.pop("_loaded_run_dir", None)
             st.rerun()
     else:
         st.caption(
@@ -2197,7 +2485,7 @@ with tab_spot:
 with tab_export:
     st.subheader("Config (YAML)")
     _cfg_gen, _ = st.columns([1, 3])
-    if _cfg_gen.button("Generate config", use_container_width=True):
+    if _cfg_gen.button("Generate config", width="stretch"):
         st.session_state["config_yaml"] = _dump_config_yaml(
             _build_config_dict())
     if "config_yaml" not in st.session_state:
@@ -2214,7 +2502,7 @@ with tab_export:
         _export_path = _cfg_c1.text_input(
             "Config file path", value=_default_export_path)
         if _cfg_c2.button("Export config", type="primary",
-                          use_container_width=True):
+                          width="stretch"):
             try:
                 yaml.safe_load(_edited_yaml)
             except yaml.YAMLError as exc:
@@ -2241,7 +2529,7 @@ with tab_export:
         _h5_path = _h5_c1.text_input(
             "Save path", value=_default_h5, key="h5_save_path")
         if _h5_c2.button("Save HDF5", type="primary",
-                         use_container_width=True):
+                         width="stretch"):
             import h5py
             if not _h5_path.endswith(".h5"):
                 _h5_path += ".h5"
@@ -2314,7 +2602,7 @@ with tab_export:
 
         if not _selected:
             st.caption("Select at least one figure.")
-        elif st.button("Build HTML", use_container_width=False):
+        elif st.button("Build HTML", width="content"):
             _params_text = None
             if model_ready:
                 _sum_mp = st.session_state["model_params"]
