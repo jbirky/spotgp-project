@@ -18,8 +18,35 @@ Or from anywhere, pointing at a specific project:
 streamlit run /path/to/spotgp-project/scripts/app.py -- --project-dir ~/projects/kepler-411
 ```
 
-The app opens at `http://localhost:8501`. On an HPC cluster, submit through
-SLURM and tunnel the port:
+The app opens at `http://localhost:8501`.
+
+### Remote access
+
+When running the app on a remote machine, `make app` prints connection
+URLs after startup. Three options depending on your network setup:
+
+**Same machine** — open `http://localhost:8501` in a browser on the host.
+
+**Same network (LAN)** — open `http://<remote-ip>:8501` from any machine
+on the same network. The IP is printed at startup.
+
+**Different network (SSH tunnel)** — run this on your local machine:
+
+```bash
+ssh -L 8501:localhost:8501 <remote-host>
+```
+
+Then open `http://localhost:8501` in your local browser. This works
+regardless of firewalls since it tunnels through your SSH connection.
+
+To use a different port, set `PORT`:
+
+```bash
+make app PORT=9000
+# tunnel: ssh -L 9000:localhost:9000 <remote-host>
+```
+
+On an HPC cluster, submit through SLURM and tunnel the port:
 
 ```bash
 sbatch scripts/run_app.slurm

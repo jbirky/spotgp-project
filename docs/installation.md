@@ -36,6 +36,10 @@ Set a custom container path when running:
 SPOTGP_SIF=/path/to/spotgp.sif sbatch scripts/run_fit.slurm configs/my_star.yaml
 ```
 
+To serve the interactive explorer to a whole group through the browser — one
+shared install, per-user project directories, no local setup — see
+[Running on OSCER](oscer.md).
+
 ## Optional dependencies
 
 These are commented out in `requirements.txt` — uncomment or install

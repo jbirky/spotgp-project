@@ -29,7 +29,15 @@ test:
 	pytest -v
 
 app:
-	streamlit run $(SCRIPTS)/app.py --server.port=$(PORT) $(if $(PROJECT_DIR),-- --project-dir $(PROJECT_DIR))
+	@HOST_IP=$$(hostname -I 2>/dev/null | awk '{print $$1}'); \
+	( sleep 3; \
+	  echo ""; \
+	  echo "  Local:      http://localhost:$(PORT)"; \
+	  echo "  Network:    http://$${HOST_IP:-<remote-ip>}:$(PORT)"; \
+	  echo "  SSH tunnel: ssh -L $(PORT):localhost:$(PORT) <remote-host>"; \
+	  echo "              then open http://localhost:$(PORT)"; \
+	  echo "" ) &
+	streamlit run $(SCRIPTS)/app.py --server.port=$(PORT) --server.headless=true --server.address=0.0.0.0 --browser.serverAddress=localhost $(if $(PROJECT_DIR),-- --project-dir $(PROJECT_DIR))
 
 shell:
 	apptainer shell --bind $(PWD):/work $(SPOTGP_SIF)
