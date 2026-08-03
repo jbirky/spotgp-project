@@ -4,6 +4,7 @@ import argparse
 import html
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -26,6 +27,11 @@ try:
     from build_index import scan_results, write_index
 except Exception:  # keep the app usable if the helper is unavailable
     scan_results = write_index = None
+
+try:
+    from init_project import init_project
+except Exception:
+    init_project = None
 
 _app_parser = argparse.ArgumentParser(add_help=False)
 _app_parser.add_argument("--project-dir", default=None)
@@ -930,6 +936,53 @@ def build_plots_html(figs, title, params_text=None, standalone=True):
             + "\n</body>\n</html>\n")
 
 
+# ── Project selection ────────────────────────────────────────────────
+
+_NEW_PROJECT_LABEL = "+ New project…"
+
+
+def _project_picker(root):
+    """Sidebar project selector constrained to a per-user root directory.
+
+    Used on shared deployments (see docs/oscer.md), where SPOTGP_PROJECT_ROOT
+    points at the user's own space and a free-form path box would let the app
+    read and write anywhere the process can reach.
+    """
+    try:
+        os.makedirs(root, exist_ok=True)
+        names = sorted(d for d in os.listdir(root)
+                       if os.path.isdir(os.path.join(root, d)))
+    except OSError as e:
+        st.sidebar.error(f"Cannot read project root {root}: {e}")
+        st.stop()
+
+    default = os.environ.get("SPOTGP_PROJECT")
+    if _app_args.project_dir:
+        _arg = os.path.abspath(os.path.expanduser(_app_args.project_dir))
+        if os.path.dirname(_arg) == root:
+            default = os.path.basename(_arg)
+
+    options = names + [_NEW_PROJECT_LABEL]
+    choice = st.sidebar.selectbox(
+        "Project", options,
+        index=options.index(default) if default in names else 0,
+        help=f"Projects in {root}")
+
+    if choice != _NEW_PROJECT_LABEL:
+        return os.path.join(root, choice)
+
+    new_name = st.sidebar.text_input("New project name", key="new_project")
+    if st.sidebar.button("Create project", width="stretch"):
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", new_name or ""):
+            st.sidebar.error("Use letters, digits, dot, dash or underscore.")
+        elif init_project is None:
+            st.sidebar.error("init_project.py is unavailable.")
+        else:
+            init_project(os.path.join(root, new_name))
+            st.rerun()
+    st.stop()
+
+
 # ── Sidebar ──────────────────────────────────────────────────────────
 
 
@@ -949,11 +1002,16 @@ _device_idx = st.sidebar.selectbox(
 if _device_idx is not None:
     jax.config.update("jax_default_device", _available_devices[_device_idx])
 
-_project_dir = st.sidebar.text_input(
-    "Project directory",
-    value=_app_args.project_dir or os.getcwd(),
-    help="Root directory for configs, data, and results. "
-         "Create with: python scripts/init_project.py <path>")
+_project_root = os.environ.get("SPOTGP_PROJECT_ROOT")
+if _project_root:
+    _project_dir = _project_picker(
+        os.path.abspath(os.path.expanduser(_project_root)))
+else:
+    _project_dir = st.sidebar.text_input(
+        "Project directory",
+        value=_app_args.project_dir or os.getcwd(),
+        help="Root directory for configs, data, and results. "
+             "Create with: python scripts/init_project.py <path>")
 
 
 def _ppath(*parts):

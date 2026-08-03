@@ -48,6 +48,7 @@ nav:
     - Project Setup: project-setup.md
     - Interactive Explorer: gui-guide.md
     - YAML Config Guide: yaml-guide.md
+    - Running on OSCER: oscer.md
   - Projects:
     - Gallery: projects/index.md
     - KIC-8507979: projects/KIC-8507979.md
