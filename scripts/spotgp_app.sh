@@ -47,7 +47,7 @@ usage() {
     exit 0
 }
 
-SPOTGP_ROOT="${SPOTGP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+SPOTGP_ROOT="${SPOTGP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SPOTGP_OOD_URL="${SPOTGP_OOD_URL:-https://ondemand.oscer.ou.edu}"
 WHOAMI="${USER:-$(id -un)}"
 
@@ -105,8 +105,13 @@ if [[ -n "${SPOTGP_ENV:-}" ]]; then
     elif command -v conda >/dev/null 2>&1; then
         eval "$(conda shell.bash hook)"
         conda activate "$SPOTGP_ENV"
+    elif command -v activate >/dev/null 2>&1; then
+        # OSCER's documented style after `module load Mamba`
+        # shellcheck disable=SC1091
+        source activate "$SPOTGP_ENV"
     else
-        echo "SPOTGP_ENV=$SPOTGP_ENV is not a venv and conda is unavailable" >&2
+        echo "SPOTGP_ENV=$SPOTGP_ENV is not a venv and conda is unavailable." >&2
+        echo "On OSCER, run 'module load Mamba' first." >&2
         exit 1
     fi
 elif [[ -n "${SPOTGP_SIF:-}" ]]; then

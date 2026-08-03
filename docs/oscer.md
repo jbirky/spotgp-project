@@ -39,16 +39,40 @@ This creates:
 /ourdisk/hpc/astrogroup/
 ├── shared/
 │   ├── spotgp-project/     read-only clone of this repo
-│   ├── envs/spotgp/        shared conda environment
-│   └── containers/         optional Apptainer images
+│   └── containers/         shared Apptainer image
 ├── alice/                  per-user project roots
 ├── bob/
 └── carol/
 ```
 
-The script prints the `mamba`/`pip` commands for the shared environment — that
-part is manual because the conda module name is site-specific. Users need read
-and execute on `shared/`, and write access only to their own directory.
+Users need read and execute on `shared/`, and write access only to their own
+directory.
+
+!!! warning "Don't put a conda environment on /ourdisk"
+
+    [OSCER asks](https://www.ou.edu/oscer/applications/python/mamba) that
+    Python environments not be created on `/ourdisk` — they scatter huge
+    numbers of small files across Ceph. A *shared* runtime therefore has to be
+    an Apptainer image (one file, which is fine), launched with
+    `SPOTGP_SIF=/ourdisk/hpc/astrogroup/shared/containers/spotgp.sif`.
+    Without an image, each user builds their own environment in their **home**
+    directory, as below.
+
+## Python environment (each user, once)
+
+Skip this if your group has a shared container image. Otherwise, from a
+Schooner login node:
+
+```bash
+module load Mamba
+mamba create -n spotgp python=3.11
+source activate spotgp
+pip install -r ~/spotgp-project/requirements.txt
+```
+
+OSCER documents `source activate`, not `conda activate`, and advises against
+`mamba init`. Installing packages on a login node is fine; *running* fits
+there is not — that's what the SLURM job below is for.
 
 ## Launching (each user)
 
@@ -59,11 +83,16 @@ and execute on `shared/`, and write access only to their own directory.
    will run.
 3. When the session starts, click **Connect to Jupyter**, then open a
    **Terminal** from the JupyterLab launcher.
-4. Run:
+4. Activate the environment and run the launcher:
 
 ```bash
-/ourdisk/hpc/astrogroup/shared/spotgp-project/scripts/spotgp_app.sh my-project
+module load Mamba && source activate spotgp     # or: export SPOTGP_SIF=...
+~/spotgp-project/scripts/spotgp_app.sh my-project
 ```
+
+(Once the group install exists, use
+`/ourdisk/hpc/astrogroup/shared/spotgp-project/scripts/spotgp_app.sh` instead
+of your own clone.)
 
 The script creates `/ourdisk/hpc/astrogroup/$USER/my-project/` on first run
 (via `init_project.py`, so it gets its own `configs/`, `data/`, `results/`,

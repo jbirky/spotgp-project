@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-mkdir -p "$SHARED/containers" "$SHARED/envs"
+mkdir -p "$SHARED/containers"
 
 # ── Code ─────────────────────────────────────────────────────────────
 
@@ -45,17 +45,27 @@ chmod +x "$SHARED/spotgp-project/scripts/spotgp_app.sh"
 
 # ── Shared environment ───────────────────────────────────────────────
 
-if [[ ! -d "$SHARED/envs/spotgp" ]]; then
+if [[ ! -f "$SHARED/containers/spotgp.sif" ]]; then
     cat <<EOF
 
-Next: create the shared environment (this part is manual because the conda
-module name is site-specific):
+Next: provide a runtime. OSCER asks that conda/mamba environments NOT be
+created on /ourdisk — they put huge numbers of small files on Ceph — so a
+shared runtime has to be a container image (a single file, which is fine):
 
-    module load Mamba          # or Anaconda3 — check 'module avail'
-    mamba create -p $SHARED/envs/spotgp python=3.11
-    mamba activate $SHARED/envs/spotgp
+    apptainer pull $SHARED/containers/spotgp.sif docker://ghcr.io/<org>/spotgp:latest
+
+Users then launch with:
+
+    SPOTGP_SIF=$SHARED/containers/spotgp.sif \\
+      $SHARED/spotgp-project/scripts/spotgp_app.sh my-project
+
+If you don't have an image, each user makes their own environment in their
+OWN HOME directory instead (a few minutes, once per person):
+
+    module load Mamba
+    mamba create -n spotgp python=3.11
+    source activate spotgp
     pip install -r $SHARED/spotgp-project/requirements.txt
-    pip install jupyter-server-proxy    # only needed for the launcher tile
 
 Then re-run this script to fix permissions.
 EOF
